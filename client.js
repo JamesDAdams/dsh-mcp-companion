@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.5'
+    const CLIENT_VERSION = '1.1.7'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -407,8 +407,14 @@ window.__ModuleLoader__.load({
       'display:flex;flex-direction:column;padding:6px;border-radius:12px;',
       'border:1px solid var(--dsw-alias-border-l2, #3a3a3e);background:var(--dsw-alias-bg-layer-2, #2c2c2e);',
       'box-shadow:0 16px 40px rgba(0,0,0,.45);color:var(--dsw-alias-label-primary);font-size:13px}',
-      '.dsh-mcp-head{padding:6px 8px 8px;font-size:11px;font-weight:600;letter-spacing:.04em;',
+      '.dsh-mcp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;',
+      'padding:6px 8px 8px;font-size:11px;font-weight:600;letter-spacing:.04em;',
       'text-transform:uppercase;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-mcp-head-total{font-weight:600;letter-spacing:0;text-transform:none;',
+      'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
+      '.dsh-mcp-head-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcp-tokens{font-size:11px;color:var(--dsw-alias-label-secondary);',
+      'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
       '.dsh-mcp-list{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:2px}',
       '.dsh-mcp-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;',
       'cursor:pointer;user-select:none;outline:none}',
@@ -442,7 +448,13 @@ window.__ModuleLoader__.load({
 
     function ensureStyles() {
       try {
-        if (document.getElementById('dsh-mcp-companion-styles') !== null) return
+        const existing = document.getElementById('dsh-mcp-companion-styles')
+        if (existing !== null) {
+          // A reloaded bundle keeps the previous sheet in the head; refresh its
+          // content so new rules apply without a page reload.
+          if (existing.textContent !== CHIP_CSS) existing.textContent = CHIP_CSS
+          return
+        }
         const style = document.createElement('style')
         style.id = 'dsh-mcp-companion-styles'
         style.textContent = CHIP_CSS
@@ -453,6 +465,18 @@ window.__ModuleLoader__.load({
     }
 
     const labelOf = (server) => String(server?.name ?? '')
+
+    /** Compact token count: 812, 3.4k, 12k. */
+    function formatTokens(value) {
+      const number = typeof value === 'number' && Number.isFinite(value) ? value : 0
+      if (number <= 0) return ''
+      if (number >= 10000) return Math.round(number / 1000) + 'k tok'
+      if (number >= 1000) {
+        const short = (Math.round(number / 100) / 10).toFixed(1)
+        return (short.endsWith('.0') ? short.slice(0, -2) : short) + 'k tok'
+      }
+      return String(number) + ' tok'
+    }
 
     function subtitleOf(server) {
       const parts = []
@@ -656,11 +680,18 @@ window.__ModuleLoader__.load({
         text.appendChild(name)
         text.appendChild(sub)
 
+        const tokens = formatTokens(server?.tokens)
+        const badge = document.createElement('div')
+        badge.className = 'dsh-mcp-tokens'
+        badge.textContent = tokens
+        badge.title = 'Poids des sch\u00e9mas de ce serveur dans le contexte'
+
         const toggle = document.createElement('div')
         toggle.className = 'dsh-mcp-switch'
         toggle.dataset.on = String(on)
 
         row.appendChild(text)
+        if (tokens !== '') row.appendChild(badge)
         row.appendChild(toggle)
 
         if (!locked) {
@@ -678,15 +709,28 @@ window.__ModuleLoader__.load({
 
       function render() {
         if (menu === null) return
-        const head = document.createElement('div')
-        head.className = 'dsh-mcp-head'
-        head.textContent = 'MCP de cette conversation'
-
-        const list = document.createElement('div')
-        list.className = 'dsh-mcp-list'
         const servers = Array.isArray(payload?.servers) ? payload.servers : []
         const rows = servers.filter((server) => server !== null && typeof server === 'object'
           && (server.toggleable === true || server.active === true))
+
+        const head = document.createElement('div')
+        head.className = 'dsh-mcp-head'
+        const headLabel = document.createElement('span')
+        headLabel.className = 'dsh-mcp-head-label'
+        headLabel.textContent = 'MCP de cette conversation'
+        head.appendChild(headLabel)
+        const activeTokens = rows.reduce((total, server) => total
+          + (server?.enabled === false ? 0 : (typeof server?.tokens === 'number' ? server.tokens : 0)), 0)
+        if (activeTokens > 0) {
+          const headTotal = document.createElement('span')
+          headTotal.className = 'dsh-mcp-head-total'
+          headTotal.textContent = formatTokens(activeTokens)
+          headTotal.title = 'Poids total des outils MCP actifs dans cette conversation'
+          head.appendChild(headTotal)
+        }
+
+        const list = document.createElement('div')
+        list.className = 'dsh-mcp-list'
         if (payload === null) list.appendChild(note('Chargement\u2026'))
         else if (rows.length === 0) list.appendChild(note('Aucun serveur MCP actif.'))
         else for (const server of rows) list.appendChild(rowElement(server))

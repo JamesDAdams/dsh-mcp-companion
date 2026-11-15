@@ -52,6 +52,7 @@ Or, inside the app, through the plugin manager (install a bundle from the packag
 On the **New Session** screen, the row that holds the workspace picker and `Standard mode` gains one more **`MCP`** button, snug against the mode control (the button is registered in the additive `conversation.hero.options` slot, then offset to sit right of the mode selector).
 
 - The menu lists the active MCP servers (name, tool count, origin) with one switch each.
+- Each server shows **its token weight**: the size of its tool schemas, measured with DSH's own context-meter heuristic (`JSON length / 4 + 4`, as in `@deepseek-ai/dsh-token-meter`). The header adds up the active servers.
 - A switch turns that server's tools off **for this conversation's agent only**: every other conversation and agent keeps its tools.
 - A server disabled profile-wide can be **re-enabled for a single conversation**: the local override wins over the global setting.
 - Conversation settings are persisted and follow the session when you reopen it; a value equal to the global default is not stored, so the file only records real differences.

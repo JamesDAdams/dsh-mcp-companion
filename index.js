@@ -72,6 +72,20 @@ function asNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+/** Same heuristic the harness' own token meter uses (dsh-token-meter/estimate). */
+const CHARS_PER_TOKEN = 4
+const BLOCK_OVERHEAD = 4
+
+/** Heuristic size of one server's tool schemas, as the model receives them. */
+function estimateToolTokens(list) {
+  if (!Array.isArray(list) || list.length === 0) return 0
+  try {
+    return Math.ceil(JSON.stringify(list).length / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+  } catch {
+    return 0
+  }
+}
+
 /** Read a Host service without ever throwing when it is absent. */
 function serviceOf(ctx, name) {
   try {
@@ -243,6 +257,8 @@ function inventory(ctx, disabled, sessionId, state) {
       servers.set(serverName, row)
     }
     row.toolCount += 1
+    if (row.raw === undefined) row.raw = []
+    row.raw.push(schema)
     if (row.tools.length < MAX_TOOLS) {
       row.tools.push({
         name: schema.name,
@@ -259,12 +275,11 @@ function inventory(ctx, disabled, sessionId, state) {
   // entry so they are visible and filterable there.
   const bridgeEntry = entries.find((entry) => entry.name === RESOURCE_BRIDGE_PACKAGE && entry.disabled !== true)
   if (bridgeEntry !== undefined) {
-    const resourceTools = schemas
-      .filter((schema) => RESOURCE_TOOLS.includes(schema.name))
-      .map((schema) => ({
-        name: schema.name,
-        description: asString(schema.description, 280) ?? '',
-      }))
+    const bridgeSchemas = schemas.filter((schema) => RESOURCE_TOOLS.includes(schema.name))
+    const resourceTools = bridgeSchemas.map((schema) => ({
+      name: schema.name,
+      description: asString(schema.description, 280) ?? '',
+    }))
     servers.set(RESOURCE_BRIDGE_NAME, {
       name: RESOURCE_BRIDGE_NAME,
       source: 'bridge',
@@ -280,6 +295,7 @@ function inventory(ctx, disabled, sessionId, state) {
       active: resourceTools.length > 0,
       toolCount: resourceTools.length,
       tools: resourceTools,
+      raw: bridgeSchemas,
       provider: RESOURCE_BRIDGE_PACKAGE,
     })
   }
@@ -301,6 +317,15 @@ function inventory(ctx, disabled, sessionId, state) {
     if (a.active !== b.active) return a.active ? -1 : 1
     return a.name.localeCompare(b.name)
   })
+
+  // Price each server's tool schemas with the harness' own heuristic so the
+  // numbers match the context breakdown the app already shows.
+  let toolTokens = 0
+  for (const row of rows) {
+    row.tokens = estimateToolTokens(row.raw)
+    toolTokens += row.tokens
+    delete row.raw
+  }
 
   // Per-conversation view: which rows this session overrides, and what the
   // profile default would be without those overrides.
@@ -325,6 +350,7 @@ function inventory(ctx, disabled, sessionId, state) {
     servers: rows.length,
     active: rows.filter((row) => row.active && row.enabled !== false).length,
     tools: rows.reduce((total, row) => total + row.toolCount, 0),
+    tokens: toolTokens,
     plugin: rows.filter((row) => row.source === 'plugin').length,
     bridge: rows.filter((row) => row.source === 'bridge').length,
     declared: rows.filter((row) => row.source === 'profile').length,

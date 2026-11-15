@@ -52,6 +52,7 @@ Ou, dans l'application, via le gestionnaire de plugins (installation d'un bundle
 Sur l'écran **New Session**, la rangée qui contient le sélecteur de workspace et `Standard mode` reçoit un bouton **`MCP`** supplémentaire, collé juste après le mode (le bouton est enregistré dans le slot additif `conversation.hero.options`, puis décalé pour venir se placer à droite du sélecteur de mode).
 
 - Le menu liste les serveurs MCP actifs (nom, nombre d'outils, origine) avec un interrupteur chacun.
+- Chaque serveur affiche **son poids en tokens** : la taille de ses schémas d'outils, calculée avec l'heuristique du compteur de contexte de DSH (`longueur du JSON / 4 + 4`, comme `@deepseek-ai/dsh-token-meter`). L'en-tête additionne les serveurs actifs.
 - Un interrupteur coupe les outils de ce serveur **pour l'agent de cette conversation seulement** : les autres conversations et les autres agents gardent leurs outils.
 - Un serveur coupé partout dans le profil peut être **réactivé pour une seule conversation** : l'override local l'emporte sur le réglage global.
 - Les réglages de conversation sont persistés et suivent la session quand vous la rouvrez ; un réglage identique au défaut global n'est pas enregistré (le fichier ne garde que les différences).
