@@ -70,6 +70,7 @@ La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la
 - Chaque ligne : le nom exact que le modèle reçoit, la description, le **poids du schéma en tokens** et un interrupteur. Un clic sur le nom déplie la **définition complète envoyée au modèle** (nom, description, paramètres), telle que le Host la sert.
 - Couper un outil le retire du schéma du modèle **pour tous les agents**, sans toucher au reste. L'en-tête additionne les outils actifs et leur poids.
 - Un outil non restreignable (`locked`) est affiché avec son interrupteur désactivé : `ctx.tools.restrict()` n'accepte que les noms visibles avant restriction.
+- Les outils sont **groupés par plugin**, d'après la liste réelle des plugins chargés : groupes de plugins d'abord (alphabétiques), puis un groupe `harness` pour les outils qu'aucun plugin ne revendique. Un groupe de plus d'une ligne porte son propre interrupteur en en-tête pour tout couper ou tout rallumer d'un coup ; deux plugins à égalité sur un nom ⇒ pas de groupe attribué, l'outil reste dans `harness`.
 - La liste défile dans son propre cadre : la barre d'onglets reste fixe en haut.
 
 ### System prompt
@@ -77,6 +78,7 @@ La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la
 - Une ligne par section du prompt assemble par `ctx.systemPrompt` : `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<serveur>`, `app:web-surface`, `harness:source`…
 - Chaque ligne affiche une **description** de la section, son ordre d'assemblage, son poids en tokens et un interrupteur. Un clic sur le nom déplie le texte exact de la section.
 - Couper une section la retire du prompt de **toutes** les conversations, sans toucher au plugin qui l'a enregistrée.
+- Les sections sont **groupées par plugin** de la même façon (les sections `mcp:<serveur>` et le pont de ressources sont attribués depuis l'inventaire MCP, pas par devinette), avec le même interrupteur de groupe. L'ordre d'assemblage reste lisible en étiquette `order N` sur chaque ligne.
 
 Les deux réglages sont **globaux au profil** (comme les interrupteurs du panneau) et persistent dans le même fichier d'état (`tools` et `prompts`).
 

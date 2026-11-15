@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.13'
+    const CLIENT_VERSION = '1.2.14'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -1102,14 +1102,6 @@ window.__ModuleLoader__.load({
       tok.title = 'Weight of this schema in the context'
 
       element.appendChild(text)
-      const toolOwner = typeof row.owner === 'string' ? row.owner : ''
-      if (toolOwner !== '') {
-        const tag = document.createElement('span')
-        tag.className = 'dsh-mcpc-tag'
-        tag.textContent = toolOwner
-        tag.title = 'Plugin that registers this tool'
-        element.appendChild(tag)
-      }
       if (tokens !== '') element.appendChild(tok)
       const locked = row.locked === true || row.serverDisabled === true
       element.appendChild(switchElement(
@@ -1174,14 +1166,6 @@ window.__ModuleLoader__.load({
       order.title = 'Place of this section in the assembled prompt'
 
       element.appendChild(text)
-      const sectionOwner = typeof row.owner === 'string' ? row.owner : ''
-      if (sectionOwner !== '') {
-        const tag = document.createElement('span')
-        tag.className = 'dsh-mcpc-tag'
-        tag.textContent = sectionOwner
-        tag.title = 'Plugin that registers this section'
-        element.appendChild(tag)
-      }
       element.appendChild(order)
       if (tokens !== '') element.appendChild(tok)
       element.appendChild(switchElement(row.enabled === true, 'Turn this section on or off', (wanted) => {

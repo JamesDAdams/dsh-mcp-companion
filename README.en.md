@@ -70,6 +70,7 @@ The panel's **Skill / MCP** page gets two extra tabs, appended right after its o
 - Each row shows the exact name the model receives, the description, the **schema weight in tokens** and a switch. Clicking the name expands the **full definition sent to the model** (name, description, parameters), exactly as the Host serves it.
 - Switching a tool off removes it from the model schema **for every agent**, without touching anything else. The header adds up the active tools and their weight.
 - A tool that cannot be restricted (`locked`) shows a disabled switch: `ctx.tools.restrict()` only accepts names that were visible before restriction.
+- Tools are **grouped by plugin**, using the live list of loaded plugins: plugin groups first (alphabetical), then a `harness` group for the tools no plugin claims. A group of more than one row carries its own switch in the headline, to turn every row off or back on at once; two plugins matching a name equally well means no attributed group, and the tool stays in `harness`.
 - The list scrolls inside its own frame: the tab strip stays fixed at the top.
 
 ### System prompt
@@ -77,6 +78,7 @@ The panel's **Skill / MCP** page gets two extra tabs, appended right after its o
 - One row per section assembled by `ctx.systemPrompt`: `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<server>`, `app:web-surface`, `harness:source`…
 - Each row shows a **description** of the section, its assembly order, its token weight and a switch. Clicking the name expands the section's exact text.
 - Switching a section off removes it from **every** conversation's prompt, without touching the plugin that registered it.
+- Sections are **grouped by plugin** the same way (`mcp:<server>` sections and the resource bridge come from the MCP inventory, not from a guess), with the same group switch. The assembly order stays readable as an `order N` tag on each row.
 
 Both settings are **profile-wide** (like the panel's own switches) and persist in the same state file (`tools` and `prompts`).
 
