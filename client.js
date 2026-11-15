@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.1'
+    const CLIENT_VERSION = '1.1.2'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -525,32 +525,61 @@ window.__ModuleLoader__.load({
       function align() {
         try {
           const anchor = anchorOf()
-          if (anchor === null) return
+          const own = button.getBoundingClientRect()
+          if (own.width === 0) return
+          if (anchor === null) {
+            if (shift !== 0) {
+              shift = 0
+              node.style.left = ''
+            }
+            return
+          }
           const a = anchor.getBoundingClientRect()
-          const b = button.getBoundingClientRect()
-          if (b.width === 0 || (a.width === 0 && a.height === 0)) return
-          const delta = (a.right + 8) - b.left
-          // Only pull the chip leftwards, and never off the row.
-          if (delta > -0.5 || Math.abs(shift + delta) > window.innerWidth) return
-          shift += delta
+          if (a.width < 12) return
+          // The flow position is the measured left minus whatever offset this
+          // function already applied, so repeated calls converge on the same
+          // target instead of accumulating.
+          const base = own.left - shift
+          const target = a.right + 8
+          let next = target - base
+          if (Math.abs(next) < 4) next = 0
+          // Refuse to push the chip rightwards over its neighbours or off the row.
+          if (next > 8 || base + next < 4) return
+          if (Math.abs(next - shift) < 0.5) return
+          shift = next
           node.style.position = 'relative'
           node.style.zIndex = '2'
           node.style.left = shift + 'px'
+          // Diagnostics only: proves which control the chip was seated after.
+          report('align', Math.round(shift) + '|' + Math.round(a.width) + '|' + String(anchor.textContent ?? '').slice(0, 24))
         } catch {
           // Layout unavailable: leave the chip where the slot put it.
         }
       }
 
       align()
+      // The mode preset mounts its own control asynchronously, so the row is
+      // still incomplete on the first frame; re-measure for a moment and on
+      // every DOM change of the row.
+      const timers = []
+      for (const delay of [40, 120, 280, 600, 1200]) {
+        timers.push(setTimeout(align, delay))
+      }
       let watch = null
+      let mutations = null
       try {
         if (typeof ResizeObserver === 'function') {
           const target = node.parentElement ?? node
           watch = new ResizeObserver(() => align())
           watch.observe(target)
         }
+        if (typeof MutationObserver === 'function') {
+          const row = node.parentElement?.parentElement ?? node.parentElement ?? node
+          mutations = new MutationObserver(() => align())
+          mutations.observe(row, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
+        }
       } catch {
-        // No ResizeObserver: the resize listener below still covers most cases.
+        // No observers: the timers and the resize listener cover the rest.
       }
       window.addEventListener('resize', align)
 
@@ -731,7 +760,9 @@ window.__ModuleLoader__.load({
       return function disposeChip() {
         close()
         window.removeEventListener('resize', align)
+        for (const id of timers) clearTimeout(id)
         try { if (watch !== null) watch.disconnect() } catch { /* already gone */ }
+        try { if (mutations !== null) mutations.disconnect() } catch { /* already gone */ }
         try { button.remove() } catch { if (button.parentNode !== null) button.parentNode.removeChild(button) }
       }
     }
