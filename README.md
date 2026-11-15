@@ -28,7 +28,7 @@ Conséquence : ils n'apparaissent jamais dans la liste, et même ajoutés, leur 
 - `Test connection` et `Tools` fonctionnent sur ces cartes (les outils listés sont les vrais).
 - Le reste reste en lecture seule avec un message clair : l'édition YAML et la suppression sont refusées, car ces serveurs appartiennent à un autre plugin.
 - Ajoute un **bouton `MCP`** dans la rangée de la nouvelle conversation (à droite de `Standard mode`) : son menu liste les serveurs MCP et coupe ceux que vous ne voulez pas **dans cette conversation**. Le réglage est enregistré par conversation.
-- Ajoute **deux onglets** à la page Skill / MCP du panneau : **Outils** (un outil par ligne, avec son poids en tokens et son interrupteur) et **Prompt système** (une section de prompt par ligne, avec son poids et son interrupteur).
+- Ajoute **deux onglets** à la page Skill / MCP du panneau : **Tools** (les outils du harnais, un par ligne, avec leur poids en tokens et leur interrupteur) et **System prompt** (une section de prompt par ligne, avec son poids et son interrupteur).
 
 Aucun fichier d'un autre plugin n'est modifié, aucune ligne n'est ajoutée au `cordis.patch.yml` du profil, et aucun second serveur MCP n'est lancé.
 
@@ -60,19 +60,18 @@ Sur l'écran **New Session**, la rangée qui contient le sélecteur de workspace
 
 Le bouton vit dans le slot additif `conversation.hero.options` : aucun onglet, aucun élément de l'interface de DSH n'est remplacé.
 
-## Onglets « Outils » et « Prompt système »
+## Onglets « Tools » et « System prompt »
 
-La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la suite de ses propres onglets `Skills` et `MCP` — **sans modifier son code** : la décoration se fait dans le DOM rendu, avec ses propres boutons clonés (mêmes classes, même style, même soulignement).
+La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la suite de ses propres onglets `Skills` et `MCP` — **sans modifier son code** : la décoration se fait dans le DOM rendu, avec ses propres boutons clonés (mêmes classes, même style, même soulignement). Les libellés sont en anglais, comme le reste du panneau.
 
-### Outils
+### Tools
 
-- Une ligne par outil **public réellement enregistré dans le Host**, groupée par serveur MCP (`wincu`, `mcp-resource-servers`…) ou par `harnais` pour les outils intégrés.
-- Chaque ligne : le nom exact que le modèle reçoit (`mcp__wincu__windows_computer_use_click`, `read`…), la description, le **poids du schéma en tokens** et un interrupteur.
-- Couper un outil le retire du schéma du modèle **pour tous les agents**, sans désactiver son serveur. L'en-tête additionne les outils actifs et leur poids.
-- Un serveur MCP coupé apparaît en grisé (« serveur désactivé ») : le réglage reste possible mais n'a d'effet qu'une fois le serveur rallumé.
+- Une ligne par outil **du harnais** réellement enregistré dans le Host (`read`, `bash`, `web_search`…). Les outils des serveurs MCP ne sont **pas** dupliqués ici : ils restent affichés par la section `MCP` du panneau, avec l'interrupteur par serveur.
+- Chaque ligne : le nom exact que le modèle reçoit, la description, le **poids du schéma en tokens** et un interrupteur.
+- Couper un outil le retire du schéma du modèle **pour tous les agents**, sans toucher au reste. L'en-tête additionne les outils actifs et leur poids.
 - Un outil non restreignable (`locked`) est affiché avec son interrupteur désactivé : `ctx.tools.restrict()` n'accepte que les noms visibles avant restriction.
 
-### Prompt système
+### System prompt
 
 - Une ligne par section du prompt assemble par `ctx.systemPrompt` : `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<serveur>`, `app:web-surface`, `harness:source`…
 - Chaque ligne affiche l'ordre d'assemblage, le nombre de caractères, le poids en tokens et un interrupteur. Un clic sur le nom déplie le texte exact de la section.
@@ -88,7 +87,7 @@ Les deux réglages sont **globaux au profil** (comme les interrupteurs du pannea
 - `GET /local-dsh-customizer/mcp-servers?toggle=<nom>&enabled=true|false` bascule un serveur, écrit l'état et réapplique les restrictions.
 - `...?session=<id>` renvoie la vue de cette conversation (avec `override` et `globalEnabled` par serveur) ; `...&session=<id>&toggle=...` écrit un override de conversation au lieu du défaut du profil.
 - La désactivation monte un petit plugin sur chaque `agent.ctx` qui appelle `ctx.tools.restrict({ deny })` — même mécanisme que `dsh-skill-mcp-panel`, avec garde de ré-entrance sur `tools/change` pour éviter la boucle connue de cette API. La liste refusée est recalculée par agent : défaut du profil + overrides de **sa** session.
-- `...?view=tools[&applied=1]` liste tous les outils publics avec leur poids ; `...?view=prompts[&applied=1]` liste les sections du prompt. `applied=1` assemble le prompt de chaque agent vivant et renvoie quelles sections ne contribuent plus de texte et quels outils ne sont plus dans leur schéma : c'est la preuve d'effet, utile au diagnostic.
+- `...?view=tools[&applied=1]` liste les outils du harnais avec leur poids ; `...?view=prompts[&applied=1]` liste les sections du prompt. `applied=1` assemble le prompt de chaque agent vivant et renvoie quelles sections ne contribuent plus de texte et quels outils ne sont plus dans leur schéma : c'est la preuve d'effet, utile au diagnostic.
 - `...?toggleTool=<nom>&enabled=true|false` et `...?togglePrompt=<nom>&enabled=true|false` écrivent les deux nouveaux interrupteurs.
 - Une section de prompt se coupe en enregistrant, dans le scope de **chaque agent**, une section **de même nom mais vide** : une section de scope masque la section globale homonyme, et une section vide disparaît au rendu (`renderPrompt` filtre les textes vides). Le texte n'est donc jamais envoyé au modèle et le plugin propriétaire n'est pas modifié ; réactiver la section dispose simplement cette ombre.
 - État : `<dshHome>/dsh-customizer/state.json` — `disabled` (défaut du profil), `tools` (outils coupés), `prompts` (sections coupées) et `sessions[<id>] = { on, off, at }` (overrides par conversation, 120 sessions max).

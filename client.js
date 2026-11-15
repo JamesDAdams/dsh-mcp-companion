@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.3'
+    const CLIENT_VERSION = '1.2.4'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -111,20 +111,20 @@ window.__ModuleLoader__.load({
 
     const ownerOf = (name) => {
       const server = foreign.get(name)
-      return server !== undefined && typeof server.provider === 'string' ? server.provider : 'un autre plugin'
+      return server !== undefined && typeof server.provider === 'string' ? server.provider : 'another plugin'
     }
 
     const messageOf = (name) =>
-      name + ' est fourni par ' + ownerOf(name)
-      + ' : il n\u2019a pas de ligne @deepseek-ai/dsh-mcp-client dans cordis.patch.yml. '
-      + 'Le panneau l\u2019affiche en lecture seule ; configurez-le dans les r\u00e9glages de ce plugin.'
+      name + ' is provided by ' + ownerOf(name)
+      + ': it has no @deepseek-ai/dsh-mcp-client row in cordis.patch.yml. '
+      + 'The panel shows it read-only; configure it in the settings of that plugin.'
 
     const rawTextOf = (name) =>
-      '# ' + name + ' \u2014 serveur fourni par ' + ownerOf(name) + '\n'
+      '# ' + name + ' \u2014 server provided by ' + ownerOf(name) + '\n'
       + '#\n'
-      + '# Ce serveur est mont\u00e9 par le plugin lui-m\u00eame (ctx.plugin(@deepseek-ai/dsh-mcp-client)),\n'
-      + '# donc il n\u2019existe volontairement aucune ligne @deepseek-ai/dsh-mcp-client ici.\n'
-      + '# L\u2019ajouter cr\u00e9erait un second serveur. Utilisez les r\u00e9glages du plugin.\n'
+      + '# That server is mounted by the plugin itself (ctx.plugin(@deepseek-ai/dsh-mcp-client)),\n'
+      + '# so on purpose there is no @deepseek-ai/dsh-mcp-client row here.\n'
+      + '# Adding one would start a second server. Use the settings of that plugin.\n'
 
     /** `serverName` from the args of a namespace method, whichever shape it uses. */
     function serverNameOf(args) {
@@ -246,7 +246,7 @@ window.__ModuleLoader__.load({
             ? fresh.servers.find((row) => row !== null && row.name === name)
             : undefined
           if (server === undefined) {
-            return { ok: false, error: { code: 'toggle-failed', message: 'Serveur introuvable apres bascule : ' + name } }
+            return { ok: false, error: { code: 'toggle-failed', message: 'server not found after the switch: ' + name } }
           }
           return { ok: true, value: viewOf(server) }
         })
@@ -481,13 +481,13 @@ window.__ModuleLoader__.load({
     function subtitleOf(server) {
       const parts = []
       const count = typeof server?.toolCount === 'number' ? server.toolCount : 0
-      parts.push(count + (count === 1 ? ' outil' : ' outils'))
-      if (server?.source === 'bridge') parts.push('ressources MCP')
-      else if (server?.source === 'profile') parts.push('d\u00e9clar\u00e9')
+      parts.push(count + (count === 1 ? ' tool' : ' tools'))
+      if (server?.source === 'bridge') parts.push('MCP resources')
+      else if (server?.source === 'profile') parts.push('declared')
       else if (typeof server?.provider === 'string' && server.provider.length > 0) parts.push(server.provider)
-      if (server?.override === 'on') parts.push('activ\u00e9 ici')
-      else if (server?.override === 'off') parts.push('d\u00e9sactiv\u00e9 ici')
-      else if (server?.globalEnabled === false) parts.push('d\u00e9sactiv\u00e9 partout')
+      if (server?.override === 'on') parts.push('enabled here')
+      else if (server?.override === 'off') parts.push('disabled here')
+      else if (server?.globalEnabled === false) parts.push('disabled everywhere')
       return parts.join(' \u00b7 ')
     }
 
@@ -503,7 +503,7 @@ window.__ModuleLoader__.load({
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'dsh-mcp-chip'
-      button.title = 'MCP de cette conversation'
+      button.title = 'MCP for this conversation'
       button.setAttribute('aria-haspopup', 'dialog')
       button.setAttribute('aria-expanded', 'false')
       button.innerHTML = PLUG_ICON + '<span>MCP</span>' + CHEVRON
@@ -684,7 +684,7 @@ window.__ModuleLoader__.load({
         const badge = document.createElement('div')
         badge.className = 'dsh-mcp-tokens'
         badge.textContent = tokens
-        badge.title = 'Poids des sch\u00e9mas de ce serveur dans le contexte'
+        badge.title = 'Weight of the schemas of this server in the context'
 
         const toggle = document.createElement('div')
         toggle.className = 'dsh-mcp-switch'
@@ -717,7 +717,7 @@ window.__ModuleLoader__.load({
         head.className = 'dsh-mcp-head'
         const headLabel = document.createElement('span')
         headLabel.className = 'dsh-mcp-head-label'
-        headLabel.textContent = 'MCP de cette conversation'
+        headLabel.textContent = 'MCP for this conversation'
         head.appendChild(headLabel)
         const activeTokens = rows.reduce((total, server) => total
           + (server?.enabled === false ? 0 : (typeof server?.tokens === 'number' ? server.tokens : 0)), 0)
@@ -725,21 +725,21 @@ window.__ModuleLoader__.load({
           const headTotal = document.createElement('span')
           headTotal.className = 'dsh-mcp-head-total'
           headTotal.textContent = formatTokens(activeTokens)
-          headTotal.title = 'Poids total des outils MCP actifs dans cette conversation'
+          headTotal.title = 'Total weight of the MCP tools active in this conversation'
           head.appendChild(headTotal)
         }
 
         const list = document.createElement('div')
         list.className = 'dsh-mcp-list'
-        if (payload === null) list.appendChild(note('Chargement\u2026'))
-        else if (rows.length === 0) list.appendChild(note('Aucun serveur MCP actif.'))
+        if (payload === null) list.appendChild(note('Loading\u2026'))
+        else if (rows.length === 0) list.appendChild(note('No active MCP server.'))
         else for (const server of rows) list.appendChild(rowElement(server))
 
         const foot = document.createElement('div')
         foot.className = 'dsh-mcp-foot'
         foot.textContent = hasSession
-          ? 'Ce r\u00e9glage ne vaut que pour cette conversation.'
-          : 'Ouvre une conversation pour r\u00e9gler ses MCP.'
+          ? 'This setting only applies to this conversation.'
+          : 'Open a conversation to set its MCP servers.'
 
         while (menu.firstChild !== null) menu.removeChild(menu.firstChild)
         menu.appendChild(head)
@@ -808,7 +808,7 @@ window.__ModuleLoader__.load({
         menu = document.createElement('div')
         menu.className = 'dsh-mcp-menu'
         menu.setAttribute('role', 'dialog')
-        menu.setAttribute('aria-label', 'MCP de cette conversation')
+        menu.setAttribute('aria-label', 'MCP for this conversation')
         document.body.appendChild(menu)
         button.setAttribute('aria-expanded', 'true')
         render()
@@ -870,7 +870,7 @@ window.__ModuleLoader__.load({
           name: CHIP_SLOT,
           id: CHIP_ID,
           order: -10,
-          label: 'MCP de cette conversation',
+          label: 'MCP for this conversation',
         }, ConversationMcpChip)
         slots.inject(CHIP_SLOT, register)
         report('chip-slot', CHIP_SLOT)
@@ -905,8 +905,8 @@ window.__ModuleLoader__.load({
 
     const PAGE_STYLE_ID = 'dsh-mcp-companion-page-styles'
     const PAGE_TABS = [
-      { id: 'tools', label: 'Outils', heading: 'D\u00e9finitions d\u2019outils' },
-      { id: 'prompts', label: 'Prompt syst\u00e8me', heading: 'Sections du prompt syst\u00e8me' },
+      { id: 'tools', label: 'Tools', heading: 'Tool definitions' },
+      { id: 'prompts', label: 'System prompt', heading: 'System prompt sections' },
     ]
 
     const PAGE_CSS = [
@@ -1064,8 +1064,8 @@ window.__ModuleLoader__.load({
       sub.className = 'dsh-mcpc-rowsub'
       const bits = []
       if (typeof row.description === 'string' && row.description.length > 0) bits.push(row.description)
-      if (row.locked === true) bits.push('non restreignable')
-      if (row.serverDisabled === true) bits.push('serveur d\u00e9sactiv\u00e9')
+      if (row.locked === true) bits.push('cannot be restricted')
+      if (row.serverDisabled === true) bits.push('server off')
       sub.textContent = bits.join(' \u00b7 ')
       text.appendChild(name)
       if (sub.textContent !== '') text.appendChild(sub)
@@ -1074,14 +1074,14 @@ window.__ModuleLoader__.load({
       const tok = document.createElement('span')
       tok.className = 'dsh-mcpc-tok'
       tok.textContent = tokens
-      tok.title = 'Poids de ce sch\u00e9ma dans le contexte'
+      tok.title = 'Weight of this schema in the context'
 
       element.appendChild(text)
       if (tokens !== '') element.appendChild(tok)
       const locked = row.locked === true || row.serverDisabled === true
       element.appendChild(switchElement(
         row.enabled === true,
-        locked ? 'Verrouill\u00e9' : 'Activer ou d\u00e9sactiver cet outil',
+        locked ? 'Locked' : 'Turn this tool on or off',
         (wanted) => { if (locked) return; state.flip('tools', 'toggleTool', row.name, wanted) },
       ))
       if (locked) element.lastChild.disabled = true
@@ -1104,10 +1104,10 @@ window.__ModuleLoader__.load({
       const sub = document.createElement('div')
       sub.className = 'dsh-mcpc-rowsub'
       const bits = []
-      bits.push('ordre ' + String(row.order))
-      if (row.empty === true) bits.push('vide')
-      else bits.push(String(row.chars) + ' car.')
-      if (row.dynamic === true) bits.push('dynamique')
+      bits.push('order ' + String(row.order))
+      if (row.empty === true) bits.push('empty')
+      else bits.push(String(row.chars) + ' chars')
+      if (row.dynamic === true) bits.push('dynamic')
       sub.textContent = bits.join(' \u00b7 ')
       text.appendChild(name)
       text.appendChild(sub)
@@ -1130,11 +1130,11 @@ window.__ModuleLoader__.load({
       const tok = document.createElement('span')
       tok.className = 'dsh-mcpc-tok'
       tok.textContent = tokens
-      tok.title = 'Poids de cette section dans le prompt syst\u00e8me'
+      tok.title = 'Weight of this section in the system prompt'
 
       element.appendChild(text)
       if (tokens !== '') element.appendChild(tok)
-      element.appendChild(switchElement(row.enabled === true, 'Activer ou d\u00e9sactiver cette section', (wanted) => {
+      element.appendChild(switchElement(row.enabled === true, 'Turn this section on or off', (wanted) => {
         state.flip('prompts', 'togglePrompt', row.name, wanted)
       }))
       wrap.appendChild(element)
@@ -1170,21 +1170,21 @@ window.__ModuleLoader__.load({
       if (payload === null || payload === undefined) {
         body.appendChild(headElement(
           PAGE_TABS[0].heading,
-          'Chaque interrupteur retire l\u2019outil du mod\u00e8le dans toutes les conversations.',
+          'Each switch removes the tool from the model in every conversation.',
           '',
         ))
-        body.appendChild(noteElement('Chargement\u2026', false))
+        body.appendChild(noteElement('Loading\u2026', false))
         return
       }
       const summary = payload?.summary ?? {}
       const parts = []
-      if (typeof summary.on === 'number') parts.push(summary.on + (summary.on === 1 ? ' actif' : ' actifs'))
-      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' coup\u00e9' + (summary.off === 1 ? '' : 's'))
+      if (typeof summary.on === 'number') parts.push(summary.on + ' active')
+      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' off')
       const total = formatTokens(summary.tokens)
       if (total !== '') parts.push(total)
       body.appendChild(headElement(
         PAGE_TABS[0].heading,
-        'Chaque interrupteur retire l\u2019outil du mod\u00e8le dans toutes les conversations.',
+        'Each switch removes the tool from the model in every conversation.',
         parts.join(' \u00b7 '),
       ))
 
@@ -1192,7 +1192,7 @@ window.__ModuleLoader__.load({
       if (rows.length === 0) {
         body.appendChild(noteElement(payload?.error !== undefined
           ? 'Erreur : ' + String(payload.error)
-          : 'Aucun outil enregistr\u00e9.', payload?.ok === false))
+          : 'No harness tool is registered.', payload?.ok === false))
         return
       }
       const groups = Array.isArray(payload?.groups) ? payload.groups : []
@@ -1213,7 +1213,7 @@ window.__ModuleLoader__.load({
         const bits = [String(group.on ?? 0) + '/' + String(group.count ?? 0)]
         const groupTokens = formatTokens(group.tokens)
         if (groupTokens !== '') bits.push(groupTokens)
-        if (group.serverDisabled === true) bits.push('serveur d\u00e9sactiv\u00e9')
+        if (group.serverDisabled === true) bits.push('server off')
         meta.textContent = bits.join(' \u00b7 ')
         head.appendChild(name)
         head.appendChild(meta)
@@ -1229,21 +1229,21 @@ window.__ModuleLoader__.load({
       if (payload === null || payload === undefined) {
         body.appendChild(headElement(
           PAGE_TABS[1].heading,
-          'Chaque interrupteur retire la section du prompt syst\u00e8me dans toutes les conversations.',
+          'Each switch removes the section from the system prompt in every conversation.',
           '',
         ))
-        body.appendChild(noteElement('Chargement\u2026', false))
+        body.appendChild(noteElement('Loading\u2026', false))
         return
       }
       const summary = payload?.summary ?? {}
       const parts = []
-      if (typeof summary.on === 'number') parts.push(summary.on + (summary.on === 1 ? ' section active' : ' sections actives'))
-      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' coup\u00e9' + (summary.off === 1 ? 'e' : 'es'))
+      if (typeof summary.on === 'number') parts.push(summary.on + (summary.on === 1 ? ' active section' : ' active sections'))
+      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' off')
       const total = formatTokens(summary.tokens)
       if (total !== '') parts.push(total)
       body.appendChild(headElement(
         PAGE_TABS[1].heading,
-        'Chaque interrupteur retire la section du prompt syst\u00e8me dans toutes les conversations.',
+        'Each switch removes the section from the system prompt in every conversation.',
         parts.join(' \u00b7 '),
       ))
 
@@ -1251,7 +1251,7 @@ window.__ModuleLoader__.load({
       if (rows.length === 0) {
         const message = payload?.ok === false
           ? 'Erreur : ' + String(payload.error ?? 'registre indisponible')
-          : 'Le registre du prompt syst\u00e8me n\u2019est pas accessible.'
+          : 'The system prompt registry is not available.'
         body.appendChild(noteElement(message, payload?.ok === false))
         return
       }
@@ -1261,7 +1261,7 @@ window.__ModuleLoader__.load({
       head.className = 'dsh-mcpc-grouphead'
       const name = document.createElement('span')
       name.className = 'dsh-mcpc-groupname'
-      name.textContent = 'Ordre d\u2019assemblage'
+      name.textContent = 'Assembly order'
       const meta = document.createElement('span')
       meta.className = 'dsh-mcpc-groupmeta'
       meta.textContent = String(rows.length) + ' sections'
@@ -1292,7 +1292,7 @@ window.__ModuleLoader__.load({
         .then((payload) => {
           state.loading[kind] = false
           if (payload !== null && typeof payload === 'object') state.payload[kind] = payload
-          else state.payload[kind] = { ok: false, error: 'r\u00e9ponse illisible' }
+          else state.payload[kind] = { ok: false, error: 'unreadable response' }
           if (state.tab === kind) paintPage(state, kind)
         })
         .catch((error) => {

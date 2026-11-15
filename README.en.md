@@ -28,7 +28,7 @@ As a result they never appear in the list, and even if they did, their switch wo
 - `Test connection` and `Tools` work on those cards (the listed tools are the real ones).
 - Everything else stays read-only with a readable message: YAML editing and deletion are refused because those servers belong to another plugin.
 - Adds an **`MCP` button** in the new-conversation row (right of `Standard mode`): its menu lists the MCP servers and turns off the ones you do not want **in that conversation**. The choice is stored per conversation.
-- Adds **two tabs** to the panel's Skill / MCP page: **Tools** (one tool per row, with its token weight and a switch) and **System prompt** (one prompt section per row, with its weight and a switch).
+- Adds **two tabs** to the panel's Skill / MCP page: **Tools** (the harness' own tools, one per row, with their token weight and a switch) and **System prompt** (one prompt section per row, with its weight and a switch).
 
 No other plugin's files are modified, no row is added to the profile's `cordis.patch.yml`, and no second MCP server is started.
 
@@ -66,10 +66,9 @@ The panel's **Skill / MCP** page gets two extra tabs, appended right after its o
 
 ### Tools
 
-- One row per **public tool the Host actually registers**, grouped by MCP server (`wincu`, `mcp-resource-servers`…) or under `harnais` for the built-in tools.
-- Each row shows the exact name the model receives (`mcp__wincu__windows_computer_use_click`, `read`…), the description, the **schema weight in tokens** and a switch.
-- Switching a tool off removes it from the model schema **for every agent**, without disabling its server. The header adds up the active tools and their weight.
-- A server that is switched off shows its tools greyed out ("serveur désactivé"): the tool switch still records, but only takes effect once the server is back on.
+- One row per **harness** tool the Host actually registers (`read`, `bash`, `web_search`…). MCP servers' tools are **not** duplicated here: the panel's `MCP` section already lists them, with a per-server switch.
+- Each row shows the exact name the model receives, the description, the **schema weight in tokens** and a switch.
+- Switching a tool off removes it from the model schema **for every agent**, without touching anything else. The header adds up the active tools and their weight.
 - A tool that cannot be restricted (`locked`) shows a disabled switch: `ctx.tools.restrict()` only accepts names that were visible before restriction.
 
 ### System prompt
@@ -88,7 +87,7 @@ Both settings are **profile-wide** (like the panel's own switches) and persist i
 - `GET /local-dsh-customizer/mcp-servers?toggle=<name>&enabled=true|false` flips a server, persists the state and reapplies restrictions.
 - `...?session=<id>` returns that conversation's view (with `override` and `globalEnabled` per server); `...&session=<id>&toggle=...` writes a conversation override instead of the profile default.
 - Disabling mounts a tiny plugin on each `agent.ctx` that calls `ctx.tools.restrict({ deny })` — the same mechanism `dsh-skill-mcp-panel` uses, with a `tools/change` re-entrancy guard for the loop this API is known for. The deny list is recomputed per agent: profile default + **its own** session overrides.
-- `...?view=tools[&applied=1]` lists every public tool with its weight; `...?view=prompts[&applied=1]` lists the prompt sections. `applied=1` assembles each live agent's prompt and reports which sections no longer contribute text and which tools are gone from their schema: that is the proof of effect, and it is what the diagnostic uses.
+- `...?view=tools[&applied=1]` lists the harness' own tools with their weight; `...?view=prompts[&applied=1]` lists the prompt sections. `applied=1` assembles each live agent's prompt and reports which sections no longer contribute text and which tools are gone from their schema: that is the proof of effect, and it is what the diagnostic uses.
 - `...?toggleTool=<name>&enabled=true|false` and `...?togglePrompt=<name>&enabled=true|false` write the two new switches.
 - A prompt section is switched off by registering, in **each agent's** scope, a section of the **same name with empty text**: a scoped section shadows the global one with that name, and an empty section is dropped when the prompt renders (`renderPrompt` filters empty text). The text is therefore never sent to the model and the owning plugin is untouched; turning the section back on simply disposes that shadow.
 - State: `<dshHome>/dsh-customizer/state.json` — `disabled` (profile default), `tools` (switched-off tools), `prompts` (switched-off sections) and `sessions[<id>] = { on, off, at }` (per-conversation overrides, 120 sessions max).

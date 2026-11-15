@@ -476,7 +476,6 @@ async function toolsPayload(ctx, state, wantApplied) {
   const declared = declaredServerNames(ctx)
   const restrictable = restrictableOf(ctx)
   const off = new Set(toolNamesOff(state))
-  const serverOff = new Set(nameList(state?.disabled))
 
   const rows = []
   const seen = new Set()
@@ -487,14 +486,16 @@ async function toolsPayload(ctx, state, wantApplied) {
     const server = RESOURCE_TOOLS.includes(schema.name)
       ? RESOURCE_BRIDGE_NAME
       : serverOfTool(schema.name, declared)
-    const serverDisabled = server !== undefined && serverOff.has(server)
+    // MCP servers already have their own section in the panel, with a card and
+    // a per-server switch: this tab only covers the harness' own tools.
+    if (server !== undefined) continue
     rows.push({
       name: schema.name,
-      group: server ?? 'harnais',
+      group: 'harness',
       description: asString(schema.description, 220) ?? '',
       tokens: estimateSchemaTokens(schema),
-      enabled: !off.has(schema.name) && !serverDisabled,
-      serverDisabled,
+      enabled: !off.has(schema.name),
+      serverDisabled: false,
       locked: restrictable !== null && !restrictable.has(schema.name),
     })
   }
