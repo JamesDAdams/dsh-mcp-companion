@@ -49,7 +49,7 @@ Ou, dans l'application, via le gestionnaire de plugins (installation d'un bundle
 
 ## MCP par conversation
 
-Sur l'écran **New Session**, la rangée qui contient le sélecteur de workspace et `Standard mode` reçoit un bouton **`MCP`** supplémentaire, placé à droite du mode.
+Sur l'écran **New Session**, la rangée qui contient le sélecteur de workspace et `Standard mode` reçoit un bouton **`MCP`** supplémentaire, collé juste après le mode (le bouton est enregistré dans le slot additif `conversation.hero.options`, puis décalé pour venir se placer à droite du sélecteur de mode).
 
 - Le menu liste les serveurs MCP actifs (nom, nombre d'outils, origine) avec un interrupteur chacun.
 - Un interrupteur coupe les outils de ce serveur **pour l'agent de cette conversation seulement** : les autres conversations et les autres agents gardent leurs outils.

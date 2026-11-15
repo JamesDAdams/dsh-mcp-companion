@@ -49,7 +49,7 @@ Or, inside the app, through the plugin manager (install a bundle from the packag
 
 ## Per-conversation MCP
 
-On the **New Session** screen, the row that holds the workspace picker and `Standard mode` gains one more **`MCP`** button, placed right of the mode.
+On the **New Session** screen, the row that holds the workspace picker and `Standard mode` gains one more **`MCP`** button, snug against the mode control (the button is registered in the additive `conversation.hero.options` slot, then offset to sit right of the mode selector).
 
 - The menu lists the active MCP servers (name, tool count, origin) with one switch each.
 - A switch turns that server's tools off **for this conversation's agent only**: every other conversation and agent keeps its tools.

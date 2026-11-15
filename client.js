@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.0'
+    const CLIENT_VERSION = '1.1.1'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -396,24 +396,23 @@ window.__ModuleLoader__.load({
     const CHIP_CSS = [
       '.dsh-mcp-chip-host{display:inline-flex;align-items:center;min-width:0}',
       '.dsh-mcp-chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;',
-      'border-radius:9px;border:1px solid var(--dsw-alias-border-l1);',
-      'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);',
+      'border-radius:9px;border:1px solid transparent;background:transparent;',
+      'color:var(--dsw-alias-label-primary);',
       'font:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;white-space:nowrap;',
       'transition:background .12s ease,border-color .12s ease}',
-      '.dsh-mcp-chip:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}',
-      '.dsh-mcp-chip[aria-expanded="true"]{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}',
+      '.dsh-mcp-chip:hover,.dsh-mcp-chip[aria-expanded="true"]{background:var(--dsw-alias-bg-layer-2, #2c2c2e)}',
       '.dsh-mcp-chip .dsh-mcp-chev{transition:transform .15s ease}',
       '.dsh-mcp-chip[aria-expanded="true"] .dsh-mcp-chev{transform:rotate(180deg)}',
       '.dsh-mcp-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:320px;max-height:60vh;',
       'display:flex;flex-direction:column;padding:6px;border-radius:12px;',
-      'border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-overlay);',
-      'box-shadow:0 12px 32px rgba(0,0,0,.32);color:var(--dsw-alias-label-primary);font-size:13px}',
+      'border:1px solid var(--dsw-alias-border-l2, #3a3a3e);background:var(--dsw-alias-bg-layer-2, #2c2c2e);',
+      'box-shadow:0 16px 40px rgba(0,0,0,.45);color:var(--dsw-alias-label-primary);font-size:13px}',
       '.dsh-mcp-head{padding:6px 8px 8px;font-size:11px;font-weight:600;letter-spacing:.04em;',
       'text-transform:uppercase;color:var(--dsw-alias-label-secondary)}',
       '.dsh-mcp-list{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:2px}',
       '.dsh-mcp-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;',
       'cursor:pointer;user-select:none;outline:none}',
-      '.dsh-mcp-row:hover,.dsh-mcp-row:focus-visible{background:var(--dsw-alias-bg-layer-2)}',
+      '.dsh-mcp-row:hover,.dsh-mcp-row:focus-visible{background:rgba(255,255,255,.06)}',
       '.dsh-mcp-row[data-locked="true"]{cursor:default;opacity:.55}',
       '.dsh-mcp-row[data-locked="true"]:hover{background:transparent}',
       '.dsh-mcp-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}',
@@ -421,15 +420,17 @@ window.__ModuleLoader__.load({
       '.dsh-mcp-sub{font-size:11px;color:var(--dsw-alias-label-secondary);overflow:hidden;',
       'text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-mcp-switch{position:relative;width:30px;height:17px;border-radius:99px;flex:none;box-sizing:border-box;',
-      'background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);',
+      'background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.10);',
       'transition:background .15s ease,border-color .15s ease}',
       '.dsh-mcp-switch::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;',
-      'border-radius:50%;background:var(--dsw-alias-label-secondary);transition:transform .15s ease,background .15s ease}',
-      '.dsh-mcp-switch[data-on="true"]{background:var(--dsw-alias-brand-primary);border-color:transparent}',
-      '.dsh-mcp-switch[data-on="true"]::after{transform:translateX(13px);background:#fff}',
+      'border-radius:50%;background:var(--dsw-alias-label-secondary, #9aa0a6);',
+      'transition:transform .15s ease,background .15s ease}',
+      '.dsh-mcp-switch[data-on="true"]{background:var(--dsw-alias-label-primary, #f2f2f2);border-color:transparent}',
+      '.dsh-mcp-switch[data-on="true"]::after{transform:translateX(13px);',
+      'background:var(--dsw-alias-bg-base, #151517)}',
       '.dsh-mcp-note{padding:10px 8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.45}',
       '.dsh-mcp-foot{padding:8px 8px 2px;font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary);',
-      'border-top:1px solid var(--dsw-alias-border-l1);margin-top:4px}',
+      'border-top:1px solid var(--dsw-alias-border-l1, rgba(255,255,255,.08));margin-top:4px}',
     ].join('')
 
     const PLUG_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
@@ -483,6 +484,75 @@ window.__ModuleLoader__.load({
       button.setAttribute('aria-expanded', 'false')
       button.innerHTML = PLUG_ICON + '<span>MCP</span>' + CHEVRON
       node.appendChild(button)
+
+      // The row's option group is right-aligned, so a chip registered there
+      // lands at the far right. `position: relative` plus a negative `left`
+      // moves only the painted box: no layout change, so no feedback loop and
+      // nothing else in the row moves. The anchor is the element that precedes
+      // this chip's group (the workspace and preset controls), found by walking
+      // up until a preceding sibling exists - never by matching its text, so a
+      // locale or label change cannot break it.
+      let shift = 0
+
+      /**
+       * The control the chip should follow: the last compact element before
+       * this chip's group in the row. Wide layout spacers are skipped, so a
+       * `justify-content: space-between` row and a row of plain siblings both
+       * resolve to the workspace/preset cluster.
+       */
+      function anchorOf() {
+        const own = button.getBoundingClientRect()
+        const centre = (own.top + own.bottom) / 2
+        let cursor = node
+        for (let depth = 0; depth < 4 && cursor !== null && cursor !== undefined; depth += 1) {
+          const parent = cursor.parentElement
+          if (parent === null) break
+          let sibling = cursor.previousElementSibling
+          while (sibling !== null) {
+            const rect = sibling.getBoundingClientRect()
+            const sameLine = Math.abs(((rect.top + rect.bottom) / 2) - centre) <= 40
+            const controlLike = rect.width > 12 && rect.width < 760 && rect.height >= 18 && rect.height <= 72
+            // A real gap means this is the row's free space, not a tight
+            // neighbour: only such a control is worth following.
+            if (sameLine && controlLike && (own.left - rect.right) >= 120) return sibling
+            sibling = sibling.previousElementSibling
+          }
+          cursor = parent
+        }
+        return null
+      }
+
+      function align() {
+        try {
+          const anchor = anchorOf()
+          if (anchor === null) return
+          const a = anchor.getBoundingClientRect()
+          const b = button.getBoundingClientRect()
+          if (b.width === 0 || (a.width === 0 && a.height === 0)) return
+          const delta = (a.right + 8) - b.left
+          // Only pull the chip leftwards, and never off the row.
+          if (delta > -0.5 || Math.abs(shift + delta) > window.innerWidth) return
+          shift += delta
+          node.style.position = 'relative'
+          node.style.zIndex = '2'
+          node.style.left = shift + 'px'
+        } catch {
+          // Layout unavailable: leave the chip where the slot put it.
+        }
+      }
+
+      align()
+      let watch = null
+      try {
+        if (typeof ResizeObserver === 'function') {
+          const target = node.parentElement ?? node
+          watch = new ResizeObserver(() => align())
+          watch.observe(target)
+        }
+      } catch {
+        // No ResizeObserver: the resize listener below still covers most cases.
+      }
+      window.addEventListener('resize', align)
 
       let menu = null
       let timer = null
@@ -641,6 +711,7 @@ window.__ModuleLoader__.load({
 
       function open() {
         if (menu !== null) return
+        align()
         menu = document.createElement('div')
         menu.className = 'dsh-mcp-menu'
         menu.setAttribute('role', 'dialog')
@@ -659,6 +730,8 @@ window.__ModuleLoader__.load({
 
       return function disposeChip() {
         close()
+        window.removeEventListener('resize', align)
+        try { if (watch !== null) watch.disconnect() } catch { /* already gone */ }
         try { button.remove() } catch { if (button.parentNode !== null) button.parentNode.removeChild(button) }
       }
     }
