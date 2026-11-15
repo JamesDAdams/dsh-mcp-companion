@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-companion",
-  "version": "1.2.15",
+  "version": "1.2.16",
   "private": true,
   "type": "module",
   "description": "Completes the DeepSeek Harness Skill/MCP panel with the servers another plugin mounts itself (wincu, the MCP resource bridge), gives those cards a real, persistent on/off switch, and adds an MCP chip to the New Session row that toggles MCP servers for the current conversation only, and adds two tabs to the Skill/MCP page: one tool definition per row with a switch, and one system-prompt section per row with a switch.",

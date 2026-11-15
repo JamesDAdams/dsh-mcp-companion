@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.15'
+    const CLIENT_VERSION = '1.2.16'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -927,6 +927,9 @@ window.__ModuleLoader__.load({
       'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
       '.dsh-mcpc-group{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;',
       'background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
+      '.dsh-mcpc-tokchip{font-size:10.5px;line-height:15px;padding:1px 6px;border-radius:5px;flex:none;white-space:nowrap;',
+      '  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l2)}',
+      '.MCP_toolRow .dsh-mcpc-tokchip{margin-left:auto}',
       '.dsh-mcpc-groupright{display:inline-flex;align-items:center;gap:8px;flex:none}',
       '.dsh-mcpc-grouphead{display:flex;align-items:center;justify-content:space-between;gap:8px;',
       'padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)}',
@@ -1619,6 +1622,7 @@ window.__ModuleLoader__.load({
           // body is detached by the new instance, so this one stands down.
           if (state.body.isConnected === false) { disposePage(state); return }
           repair()
+          tickMcp(state)
         } catch { /* ignore */ }
       }, 250)
 
@@ -1639,6 +1643,74 @@ window.__ModuleLoader__.load({
       return state
     }
 
+    /**
+     * Token chips on the panel's own MCP cards.
+     *
+     * The page belongs to `dsh-skill-mcp-panel` and is not modified: we only
+     * append one chip to each server headline and one to each tool row, priced
+     * from the same inventory the menu uses. Running it on every pass is safe -
+     * a chip whose text is already right is left alone, so a repaint by the
+     * panel is repaired on the next tick without churn.
+     */
+    function tickMcp(state) {
+      if (state === null) return
+      try {
+        const root = state.root
+        if (String(root?.getAttribute?.('data-tab') ?? '') !== 'mcp') return
+        const cards = Array.from(root.querySelectorAll?.('.MCP_card') ?? [])
+        if (cards.length === 0) return
+        const payload = inventory.value
+        const servers = Array.isArray(payload?.servers) ? payload.servers : null
+        if (servers === null) {
+          refresh(false)
+          return
+        }
+        for (const card of cards) {
+          const label = String(card.querySelector?.('.MCP_name')?.textContent ?? '').trim()
+          if (label === '') continue
+          const server = servers.find((row) => row?.name === label)
+          if (server === undefined) continue
+          const badges = card.querySelector?.('.MCP_badges') ?? card.querySelector?.('.MCP_cardTop')
+          if (badges !== null && badges !== undefined) {
+            chipInto(badges, server.tokens, 'Tokens this server\'s tool schemas cost', 'server')
+          }
+          for (const row of Array.from(card.querySelectorAll?.('.MCP_toolRow') ?? [])) {
+            const toolLabel = String(row.querySelector?.('.MCP_toolName')?.textContent ?? '').trim()
+            if (toolLabel === '') continue
+            const tools = Array.isArray(server.tools) ? server.tools : []
+            const tool = tools.find((entry) => entry?.name === toolLabel
+              || String(entry?.name ?? '').endsWith('__' + toolLabel))
+            if (tool === undefined) continue
+            chipInto(row, tool.tokens, 'Tokens this tool schema costs', 'tool')
+          }
+        }
+      } catch {
+        // A price chip must never break the panel.
+      }
+    }
+
+    /** Keep exactly one price chip of that kind in `container`. */
+    function chipInto(container, tokens, title, kind) {
+      let chip = null
+      for (const kid of Array.from(container.children ?? [])) {
+        if (kid?.classList?.contains?.('dsh-mcpc-tokchip') === true
+          && kid.getAttribute?.('data-kind') === kind) { chip = kid; break }
+      }
+      const text = formatTokens(tokens)
+      if (text === '') {
+        if (chip !== null) chip.remove()
+        return
+      }
+      if (chip === null) {
+        chip = document.createElement('span')
+        chip.className = 'dsh-mcpc-tokchip'
+        chip.setAttribute('data-kind', kind)
+        container.appendChild(chip)
+      }
+      if (chip.textContent !== text) chip.textContent = text
+      if (chip.title !== title) chip.title = title
+    }
+
     function disposePage(state) {
       if (state === null) return
       try { state.dispose?.() } catch { /* already disposed */ }
@@ -1655,6 +1727,7 @@ window.__ModuleLoader__.load({
       if (PAGE !== null && (root === null || root !== PAGE.root || pageAlive(PAGE) === false)) {
         disposePage(PAGE)
       }
+      if (root !== null && PAGE !== null) { tickMcp(PAGE); return }
       if (root === null || PAGE !== null) return
       ensurePageStyles()
       const state = decoratePage(root)

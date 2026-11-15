@@ -367,9 +367,17 @@ function inventory(ctx, disabled, sessionId, state) {
   })
 
   // Price each server's tool schemas with the harness' own heuristic so the
-  // numbers match the context breakdown the app already shows.
+  // numbers match the context breakdown the app already shows. Each tool keeps
+  // its own price too, for the row-level chips.
   let toolTokens = 0
   for (const row of rows) {
+    const schemas = Array.isArray(row.raw) ? row.raw : []
+    const priceOf = new Map()
+    for (const schema of schemas) priceOf.set(schema.name, estimateSchemaTokens(schema))
+    row.tools = (Array.isArray(row.tools) ? row.tools : []).map((tool) => ({
+      ...tool,
+      tokens: priceOf.get(tool.name) ?? 0,
+    }))
     row.tokens = estimateToolTokens(row.raw)
     toolTokens += row.tokens
     delete row.raw

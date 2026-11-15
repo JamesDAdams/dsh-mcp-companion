@@ -21,6 +21,7 @@ As a result they never appear in the list, and even if they did, their switch wo
 
 - Adds a **`wincu`** card with its real tools (26 in a full computer-use setup).
 - Adds an **`mcp-resource-servers`** card with the MCP resource bridge's three tools.
+- Shows the **token weight** on the panel's MCP page: one chip per server in the card headline (`5.9k tok`) and one per tool in the list (`80 tok`), priced with the harness' own heuristic, so the numbers match the Tools tab.
 - Makes the switches **work**:
   - off → the server's tools are removed from the model's schema for every agent;
   - on → they come back;
