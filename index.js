@@ -184,14 +184,14 @@ function readEntries(ctx) {
   return { available, rows }
 }
 
-function readSchemas(ctx) {
+function readSchemas(ctx, scope) {
   const tools = serviceOf(ctx, 'tools')
   const rows = []
   let available = false
   for (const method of ['schemas', 'definitions']) {
     try {
       if (tools === undefined || typeof tools[method] !== 'function') continue
-      const list = tools[method]()
+      const list = tools[method](scope)
       if (!Array.isArray(list)) continue
       available = true
       for (const item of list) {
@@ -477,12 +477,26 @@ function withName(list, name, wanted) {
   return [...set].sort()
 }
 
+/** The live Agent context: the scope that carries the core tools. */
+function agentScope(ctx) {
+  try {
+    const agents = serviceOf(ctx, 'agents')
+    const list = typeof agents?.list === 'function' ? agents.list() : []
+    const agent = Array.isArray(list) ? list[0] : undefined
+    // schemas(scope) takes the Agent itself, the same argument the applied
+    // proof already passes; handing it gent.ctx silently lists the Host rows.
+    return agent
+  } catch {
+    return undefined
+  }
+}
+
 /** The names `tools.restrict()` would accept, or null when unreadable. */
-function restrictableOf(ctx) {
+function restrictableOf(ctx, scope) {
   try {
     const tools = serviceOf(ctx, 'tools')
     if (tools === undefined || typeof tools.view !== 'function') return null
-    const view = tools.view(undefined)
+    const view = tools.view(scope)
     const names = view?.restrictableNames
     if (names !== undefined && names !== null && typeof names.has === 'function' && typeof names[Symbol.iterator] === 'function') {
       return names instanceof Set ? names : new Set(names)
@@ -866,9 +880,26 @@ function mcpSectionOwner(serverName, table, serversOf) {
 
 /** Every public tool the Host currently registers, one row each. */
 async function toolsPayload(ctx, state, wantApplied) {
-  const { available, rows: schemas } = readSchemas(ctx)
+  // The core tools live in the Agent scope, not the Host one: reading without a
+  // scope lists only the plugin-registered tools and under-reports the budget.
+  const scope = agentScope(ctx)
+  const scoped = readSchemas(ctx, scope)
+  const hosted = readSchemas(ctx)
+  // Union of both views: the Agent scope carries the core tools, the Host scope
+  // still lists the ones already switched off, so they stay visible and can be
+  // switched back on instead of silently disappearing.
+  const merged = []
+  const seenNames = new Set()
+  for (const schema of [...scoped.rows, ...hosted.rows]) {
+    if (schema === null || typeof schema !== 'object' || typeof schema.name !== 'string') continue
+    if (seenNames.has(schema.name)) continue
+    seenNames.add(schema.name)
+    merged.push(schema)
+  }
+  const available = scoped.available || hosted.available
+  const schemas = merged
   const declared = declaredServerNames(ctx)
-  const restrictable = restrictableOf(ctx)
+  const restrictable = restrictableOf(ctx, scope)
   const off = new Set(toolNamesOff(state))
   const table = ownerTable(ctx)
 
