@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.2'
+    const CLIENT_VERSION = '1.1.3'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -514,7 +514,7 @@ window.__ModuleLoader__.load({
             const controlLike = rect.width > 12 && rect.width < 760 && rect.height >= 18 && rect.height <= 72
             // A real gap means this is the row's free space, not a tight
             // neighbour: only such a control is worth following.
-            if (sameLine && controlLike && (own.left - rect.right) >= 120) return sibling
+            if (sameLine && controlLike && (own.left - rect.right) >= 60) return sibling
             sibling = sibling.previousElementSibling
           }
           cursor = parent
@@ -540,11 +540,11 @@ window.__ModuleLoader__.load({
           // function already applied, so repeated calls converge on the same
           // target instead of accumulating.
           const base = own.left - shift
-          const target = a.right + 8
+          const target = a.right + 2
           let next = target - base
-          if (Math.abs(next) < 4) next = 0
-          // Refuse to push the chip rightwards over its neighbours or off the row.
-          if (next > 8 || base + next < 4) return
+          if (Math.abs(next) < 2) next = 0
+          // Never push the chip rightwards over a neighbour, never off the row.
+          if (next > 6 || base + next < 4) return
           if (Math.abs(next - shift) < 0.5) return
           shift = next
           node.style.position = 'relative'
@@ -559,28 +559,21 @@ window.__ModuleLoader__.load({
 
       align()
       // The mode preset mounts its own control asynchronously, so the row is
-      // still incomplete on the first frame; re-measure for a moment and on
-      // every DOM change of the row.
-      const timers = []
-      for (const delay of [40, 120, 280, 600, 1200]) {
-        timers.push(setTimeout(align, delay))
+      // still incomplete on the first frame. A throttled animation loop keeps
+      // re-measuring while the hero is on screen: it snaps into place as soon
+      // as the preset exists, with no timers to tune and no observers on
+      // another plugin's subtree.
+      let frame = 0
+      let ticks = 0
+      let stopped = false
+      const step = () => {
+        if (stopped) return
+        frame = requestAnimationFrame(step)
+        ticks += 1
+        if (ticks % 5 !== 0) return
+        try { align() } catch { /* align already guards itself */ }
       }
-      let watch = null
-      let mutations = null
-      try {
-        if (typeof ResizeObserver === 'function') {
-          const target = node.parentElement ?? node
-          watch = new ResizeObserver(() => align())
-          watch.observe(target)
-        }
-        if (typeof MutationObserver === 'function') {
-          const row = node.parentElement?.parentElement ?? node.parentElement ?? node
-          mutations = new MutationObserver(() => align())
-          mutations.observe(row, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
-        }
-      } catch {
-        // No observers: the timers and the resize listener cover the rest.
-      }
+      if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(step)
       window.addEventListener('resize', align)
 
       let menu = null
@@ -759,10 +752,9 @@ window.__ModuleLoader__.load({
 
       return function disposeChip() {
         close()
+        stopped = true
+        try { if (frame !== 0) cancelAnimationFrame(frame) } catch { /* already gone */ }
         window.removeEventListener('resize', align)
-        for (const id of timers) clearTimeout(id)
-        try { if (watch !== null) watch.disconnect() } catch { /* already gone */ }
-        try { if (mutations !== null) mutations.disconnect() } catch { /* already gone */ }
         try { button.remove() } catch { if (button.parentNode !== null) button.parentNode.removeChild(button) }
       }
     }
@@ -821,16 +813,34 @@ window.__ModuleLoader__.load({
     return {
       inject: ['remote'],
       apply(ctx) {
-        refresh(true)
-        installChip(ctx)
+        // Nothing here may take the page down: every step is guarded, and a
+        // failure simply leaves the chip or the panel decoration absent.
+        try {
+          refresh(true)
+        } catch {
+          // The route is unavailable; the chip will report it when opened.
+        }
+        try {
+          installChip(ctx)
+        } catch (error) {
+          report('chip-slot-error', String(error?.message ?? error))
+        }
         // The namespace appears when the owning panel mounts it; a light poll
         // picks it up without depending on plugin activation order.
         const timer = setInterval(() => {
-          install(ctx)
-          refresh(false)
+          try {
+            install(ctx)
+            refresh(false)
+          } catch {
+            // A single failed pass must not stop the decorator.
+          }
         }, 1000)
         if (typeof timer?.unref === 'function') timer.unref()
-        ctx.effect(() => () => clearInterval(timer), 'dsh-mcp-companion: panel decorator')
+        try {
+          ctx.effect(() => () => clearInterval(timer), 'dsh-mcp-companion: panel decorator')
+        } catch {
+          // No effect scope: the interval stays for the life of the page.
+        }
       },
     }
   },
