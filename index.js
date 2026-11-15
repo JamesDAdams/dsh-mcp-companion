@@ -495,12 +495,140 @@ function definitionText(schema) {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Plugin attribution by name (heuristic)                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Package words that identify no plugin: they appear in half of them. */
+const GENERIC_WORDS = new Set([
+  'dsh', 'tool', 'tools', 'client', 'ui', 'host', 'plugin', 'plugins', 'local', 'experimental',
+  'bundle', 'preset', 'app', 'core', 'api', 'registry', 'provider', 'system', 'prompt', 'session',
+  'agent', 'goal', 'plan', 'jobs', 'skill', 'mcp', 'web', 'fs', 'harness', 'index', 'dist', 'src',
+  'deepseek', 'openai', 'node', 'http', 'https', 'github', 'main',
+])
+
+/** Strip the npm scope so the tag stays readable. */
+function shortPluginName(name) {
+  const text = asString(name, 120)
+  if (text === undefined) return undefined
+  const slug = text.split('/').pop()
+  return slug.replace(/\.js$/i, '')
+}
+
+/** Significant words of a package name, in package order. */
+function wordsOfPackage(name) {
+  const base = String(name).split('/').pop().replace(/\.js$/i, '').replace(/^dsh-/, '')
+  const words = []
+  for (const word of base.split(/[-_]/)) {
+    const token = word.toLowerCase()
+    if (token.length < 4 || GENERIC_WORDS.has(token) || words.includes(token)) continue
+    words.push(token)
+  }
+  return { base: base.toLowerCase(), words }
+}
+
+/**
+ * Candidate plugins to attribute a name to, built from the live composition.
+ *
+ * This is a heuristic and says so: it only uses package words, so a tool whose
+ * name shares nothing with its plugin stays untagged instead of being guessed.
+ */
+function ownerTable(ctx) {
+  const table = []
+  try {
+    for (const entry of readEntries(ctx).rows) {
+      if (entry.disabled === true) continue
+      const name = entry.name
+      if (typeof name !== 'string' || name.length === 0) continue
+      if (name.startsWith('file:') || name.includes('\\')) continue
+      const parsed = wordsOfPackage(name)
+      if (parsed.words.length === 0) continue
+      table.push({
+        name,
+        base: parsed.base,
+        words: parsed.words,
+        primary: parsed.words[0],
+        last: parsed.words[parsed.words.length - 1],
+      })
+    }
+  } catch { /* no loader: nothing is tagged */ }
+  return table
+}
+
+/** Words of a tool or section name, for whole-word comparisons. */
+function nameWords(name) {
+  return String(name).toLowerCase().split(/[:_-]/).filter((word) => word.length > 0)
+}
+
+/**
+ * Best-effort plugin for one tool (`tool`) or prompt section (`section`).
+ *
+ * Strong signals only: the name starts with a package word, or a section's
+ * prefix does, or one long package word appears verbatim in the name. Two
+ * different plugins matching just as well means no tag at all.
+ */
+function guessOwner(kind, name, table) {
+  const parts = nameWords(name)
+  const lower = String(name).toLowerCase()
+  const slug = lower.replace(/_/g, '-')
+  const prefix = lower.split(':')[0].replace(/-/g, '_')
+  const last = parts[parts.length - 1]
+  const matches = []
+  for (const entry of table) {
+    if (entry.base === slug) { matches.push({ plugin: entry.name, token: slug, score: 5 }); continue }
+    if (entry.base === 'tool-' + slug) { matches.push({ plugin: entry.name, token: slug, score: 4 }); continue }
+    for (const token of entry.words) {
+      let score = 0
+      // Only the package's own leading word may act as a prefix: otherwise a
+      // generic tail ("cache", "domain", "platform") tags unrelated tools.
+      if (token === entry.primary) {
+        if (kind === 'tool') {
+          if (lower.startsWith(token + '_')) score = 3
+          else if (parts.includes(token) && token.length >= 6) score = 2
+        } else {
+          if (prefix === token || prefix.startsWith(token + '_')) score = 3
+          else if (parts.includes(token) && token.length >= 6) score = 2
+        }
+      } else if (token === entry.last && token === last && token.length >= 6) {
+        // The name ends with the plugin's own last word ("*_search" -> free-search).
+        score = 2
+      }
+      if (score > 0) matches.push({ plugin: entry.name, token, score })
+    }
+  }
+  if (matches.length === 0) return undefined
+  matches.sort((a, b) => (b.score - a.score) || (b.token.length - a.token.length) || a.plugin.localeCompare(b.plugin))
+  const best = matches[0]
+  const rival = matches[1]
+  if (rival !== undefined && rival.score === best.score && rival.token === best.token) return undefined
+  return shortPluginName(best.plugin)
+}
+
+/**
+ * Attribution for the sections an MCP server publishes.
+ *
+ * The section name is the server, and the inventory already knows which plugin
+ * mounts it, so this one is not a guess at all.
+ */
+function mcpSectionOwner(serverName, table, serversOf) {
+  if (serverName === RESOURCE_BRIDGE_NAME) return shortPluginName(RESOURCE_BRIDGE_PACKAGE)
+  try {
+    const row = serversOf().find((server) => server.name === serverName)
+    if (row !== undefined) {
+      if (typeof row.provider === 'string' && row.provider.length > 0) return shortPluginName(row.provider)
+      if (row.source === 'profile') return shortPluginName(MCP_CLIENT_PACKAGE)
+    }
+  } catch { /* fall through to the name heuristic */ }
+  return guessOwner('section', 'mcp:' + serverName, table)
+}
+
 /** Every public tool the Host currently registers, one row each. */
 async function toolsPayload(ctx, state, wantApplied) {
   const { available, rows: schemas } = readSchemas(ctx)
   const declared = declaredServerNames(ctx)
   const restrictable = restrictableOf(ctx)
   const off = new Set(toolNamesOff(state))
+  const table = ownerTable(ctx)
 
   const rows = []
   const seen = new Set()
@@ -521,6 +649,7 @@ async function toolsPayload(ctx, state, wantApplied) {
       description: asString(schema.description, 220) ?? '',
       tokens: estimateSchemaTokens(schema),
       enabled: !off.has(schema.name),
+      owner: guessOwner('tool', schema.name, table),
       serverDisabled: false,
       locked: restrictable !== null && !restrictable.has(schema.name),
     })
@@ -558,6 +687,7 @@ async function toolsPayload(ctx, state, wantApplied) {
       schemasAvailable: available,
       restrictable: restrictable === null ? null : restrictable.size,
       switchedOff: [...off].length,
+      owned: rows.filter((row) => row.owner !== undefined).length,
     },
   }
   if (wantApplied === true) result.applied = appliedTools(ctx, [...off])
@@ -680,12 +810,29 @@ async function promptsPayload(ctx, state, wantApplied) {
   }
 
   const off = new Set(promptNamesOff(state))
+  const table = ownerTable(ctx)
+  // One inventory pass, and only when an MCP section actually asks for it.
+  let servers = null
+  const serversOf = () => {
+    if (servers === null) {
+      try { servers = inventory(ctx, new Set(), null, null).servers ?? [] } catch { servers = [] }
+    }
+    return servers
+  }
   const rows = []
   const seen = new Set()
   const add = (name, text, order, dynamic) => {
     if (seen.has(name)) return
     seen.add(name)
     const body = typeof text === 'string' ? text : ''
+    const owner = name === RESOURCE_BRIDGE_NAME
+      ? shortPluginName(RESOURCE_BRIDGE_PACKAGE)
+      : name.startsWith('mcp:')
+        ? mcpSectionOwner(name.slice(4), table, serversOf)
+        : name.startsWith('tool:')
+          // `tool:<name>` is the guidance of that tool: same owner as the tool.
+          ? guessOwner('tool', name.slice(5), table)
+          : guessOwner('section', name, table)
     rows.push({
       name,
       order: Number.isFinite(order) ? order : 0,
@@ -695,6 +842,7 @@ async function promptsPayload(ctx, state, wantApplied) {
       dynamic: dynamic === true,
       enabled: !off.has(name),
       description: describeSection(name, body),
+      owner,
       truncated: body.length > PROMPT_TEXT_LIMIT,
       text: body.length > PROMPT_TEXT_LIMIT ? body.slice(0, PROMPT_TEXT_LIMIT) : body,
     })
@@ -740,6 +888,7 @@ async function promptsPayload(ctx, state, wantApplied) {
       assembleError,
       registryError: registry.error,
       registry: registry.map.size,
+      owned: rows.filter((row) => row.owner !== undefined).length,
     },
   }
   if (wantApplied === true) result.applied = await appliedSections(ctx, prompt, promptNamesOff(state))
