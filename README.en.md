@@ -30,10 +30,10 @@ No other plugin's files are modified, no row is added to the profile's `cordis.p
 
 ## Installation
 
-From GitHub (replace `OWNER` with the repository owner):
+From GitHub:
 
 ```sh
-dsh plugin --profile desktop add github:OWNER/dsh-mcp-companion
+dsh plugin --profile desktop add github:JamesDAdams/dsh-mcp-companion
 ```
 
 Or, inside the app, through the plugin manager (install a bundle from the package directory). Restart DSH if the Client half is not hot-reloaded.

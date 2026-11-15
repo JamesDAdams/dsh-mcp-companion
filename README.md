@@ -30,10 +30,10 @@ Aucun fichier d'un autre plugin n'est modifié, aucune ligne n'est ajoutée au `
 
 ## Installation
 
-Depuis GitHub (remplacer `OWNER` par le compte du dépôt) :
+Depuis GitHub :
 
 ```sh
-dsh plugin --profile desktop add github:OWNER/dsh-mcp-companion
+dsh plugin --profile desktop add github:JamesDAdams/dsh-mcp-companion
 ```
 
 Ou, dans l'application, via le gestionnaire de plugins (installation d'un bundle à partir du dossier du paquet). Redémarrer DSH si le client n'est pas rechargé à chaud.
