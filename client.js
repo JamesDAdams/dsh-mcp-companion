@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.3'
+    const CLIENT_VERSION = '1.1.5'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -500,8 +500,33 @@ window.__ModuleLoader__.load({
        * `justify-content: space-between` row and a row of plain siblings both
        * resolve to the workspace/preset cluster.
        */
+      /**
+       * The first painted box at or inside `el`. Slot renderers may wrap an
+       * occupant in a `display: contents` element, whose own rect is empty:
+       * looking only at the wrapper's rect makes the real control invisible to
+       * the anchor search.
+       */
+      function boxOf(el, depth) {
+        let rect
+        try { rect = el.getBoundingClientRect() } catch { return null }
+        if (rect !== null && rect !== undefined && (rect.width > 0 || rect.height > 0)) return rect
+        if (depth <= 0) return null
+        let children
+        try { children = el.children } catch { return null }
+        if (children === null || children === undefined || typeof children.length !== 'number') return null
+        for (const child of children) {
+          const inner = boxOf(child, depth - 1)
+          if (inner !== null) return inner
+        }
+        return null
+      }
+
       function anchorOf() {
         const own = button.getBoundingClientRect()
+        // Use the flow position, not the painted one: the applied offset must
+        // never make the real anchor look too far away, or the search falls
+        // back to an earlier control and the two steal the chip from each other.
+        const flowLeft = own.left - shift
         const centre = (own.top + own.bottom) / 2
         let cursor = node
         for (let depth = 0; depth < 4 && cursor !== null && cursor !== undefined; depth += 1) {
@@ -509,12 +534,14 @@ window.__ModuleLoader__.load({
           if (parent === null) break
           let sibling = cursor.previousElementSibling
           while (sibling !== null) {
-            const rect = sibling.getBoundingClientRect()
-            const sameLine = Math.abs(((rect.top + rect.bottom) / 2) - centre) <= 40
-            const controlLike = rect.width > 12 && rect.width < 760 && rect.height >= 18 && rect.height <= 72
-            // A real gap means this is the row's free space, not a tight
-            // neighbour: only such a control is worth following.
-            if (sameLine && controlLike && (own.left - rect.right) >= 60) return sibling
+            const rect = boxOf(sibling, 3)
+            if (rect !== null) {
+              const sameLine = Math.abs(((rect.top + rect.bottom) / 2) - centre) <= 40
+              const controlLike = rect.width > 12 && rect.width < 760 && rect.height >= 18 && rect.height <= 72
+              // A real gap means this is the row's free space, not a tight
+              // neighbour: only such a control is worth following.
+              if (sameLine && controlLike && (flowLeft - rect.right) >= 60) return rect
+            }
             sibling = sibling.previousElementSibling
           }
           cursor = parent
@@ -534,7 +561,7 @@ window.__ModuleLoader__.load({
             }
             return
           }
-          const a = anchor.getBoundingClientRect()
+          const a = anchor
           if (a.width < 12) return
           // The flow position is the measured left minus whatever offset this
           // function already applied, so repeated calls converge on the same
@@ -551,7 +578,7 @@ window.__ModuleLoader__.load({
           node.style.zIndex = '2'
           node.style.left = shift + 'px'
           // Diagnostics only: proves which control the chip was seated after.
-          report('align', Math.round(shift) + '|' + Math.round(a.width) + '|' + String(anchor.textContent ?? '').slice(0, 24))
+          report('align', Math.round(shift) + '|' + Math.round(a.width) + '|' + Math.round(a.right))
         } catch {
           // Layout unavailable: leave the chip where the slot put it.
         }
