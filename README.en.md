@@ -70,7 +70,8 @@ The panel's **Skill / MCP** page gets two extra tabs, appended right after its o
 - Each row shows the exact name the model receives, the description, the **schema weight in tokens** and a switch. Clicking the name expands the **full definition sent to the model** (name, description, parameters), exactly as the Host serves it.
 - Switching a tool off removes it from the model schema **for every agent**, without touching anything else. The header adds up the active tools and their weight.
 - A tool that cannot be restricted (`locked`) shows a disabled switch: `ctx.tools.restrict()` only accepts names that were visible before restriction.
-- Tools are **grouped by plugin**, using the live list of loaded plugins: plugin groups first (alphabetical), then a `harness` group for the tools no plugin claims. A group of more than one row carries its own switch in the headline, to turn every row off or back on at once; two plugins matching a name equally well means no attributed group, and the tool stays in `harness`.
+- Tools are **grouped by plugin**, using the live list of loaded plugins: plugin groups first (alphabetical), then a `harness` group for the tools no installed plugin claims. A group of more than one row carries its own switch in the headline, to turn every row off or back on at once; two plugins matching a name equally well means no attributed group, and the tool stays in `harness`.
+- When an installed plugin and a first-party package (`@deepseek-ai/…`) match the same word, the **installed plugin wins**: that is the case for the search tools, which the harness' `web-search-deepseek` provider does not provide. Two tools whose name says nothing (`research`, `weather`) are attached to the plugin that registers them, checked in the installed package's own sources (`lib/research.js`, `lib/weather.js`).
 - The list scrolls inside its own frame: the tab strip stays fixed at the top.
 
 ### System prompt

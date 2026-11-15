@@ -593,11 +593,23 @@ function nameWords(name) {
 }
 
 /**
+ * Tools whose owner the name cannot reveal, checked against the installed
+ * package rather than guessed: `dsh-free-search` ships `lib/research.js` and
+ * `lib/weather.js` and registers exactly these names.
+ */
+const TOOL_OWNER_HINTS = {
+  research: 'dsh-free-search',
+  weather: 'dsh-free-search',
+}
+
+/**
  * Best-effort plugin for one tool (`tool`) or prompt section (`section`).
  *
  * Strong signals only: the name starts with a package word, or a section's
  * prefix does, or one long package word appears verbatim in the name. Two
- * different plugins matching just as well means no tag at all.
+ * different plugins matching just as well means no tag at all — except that an
+ * installed plugin beats a first-party package, since the first-party web
+ * search provider shares the word "search" with a third-party search plugin.
  */
 function guessOwner(kind, name, table) {
   const parts = nameWords(name)
@@ -629,10 +641,15 @@ function guessOwner(kind, name, table) {
     }
   }
   if (matches.length === 0) return undefined
-  matches.sort((a, b) => (b.score - a.score) || (b.token.length - a.token.length) || a.plugin.localeCompare(b.plugin))
+  const thirdParty = (plugin) => !String(plugin).startsWith('@deepseek-ai/')
+  matches.sort((a, b) => (b.score - a.score)
+    || (b.token.length - a.token.length)
+    || (thirdParty(a.plugin) === thirdParty(b.plugin) ? 0 : (thirdParty(a.plugin) ? -1 : 1))
+    || a.plugin.localeCompare(b.plugin))
   const best = matches[0]
   const rival = matches[1]
-  if (rival !== undefined && rival.score === best.score && rival.token === best.token) return undefined
+  if (rival !== undefined && rival.score === best.score && rival.token === best.token
+    && thirdParty(rival.plugin) === thirdParty(best.plugin)) return undefined
   return shortPluginName(best.plugin)
 }
 
@@ -677,11 +694,11 @@ async function toolsPayload(ctx, state, wantApplied) {
     rows.push({
       ...definitionText(schema),
       name: schema.name,
-      group: guessOwner('tool', schema.name, table) ?? UNATTRIBUTED,
+      group: hintedOwner(ctx, schema.name, table) ?? UNATTRIBUTED,
       description: asString(schema.description, 220) ?? '',
       tokens: estimateSchemaTokens(schema),
       enabled: !off.has(schema.name),
-      owner: guessOwner('tool', schema.name, table),
+      owner: hintedOwner(ctx, schema.name, table),
       serverDisabled: false,
       locked: restrictable !== null && !restrictable.has(schema.name),
     })
@@ -757,6 +774,17 @@ function appliedTools(ctx, off) {
     visible: [...visible.keys()].sort(),
     errors: errors.slice(0, 4),
   }
+}
+
+/** Tool owner: an explicit, verified hint first, then the name heuristic. */
+function hintedOwner(ctx, toolName, table) {
+  const hint = TOOL_OWNER_HINTS[toolName]
+  if (hint !== undefined) {
+    // Only trust the hint while that plugin is actually loaded.
+    const known = table.some((entry) => String(entry.name).split('/').pop() === hint)
+    if (known) return hint
+  }
+  return guessOwner('tool', toolName, table)
 }
 
 /** The prompt registry, read without running an assembly. */
