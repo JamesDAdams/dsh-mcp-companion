@@ -1146,6 +1146,52 @@ export function apply(ctx) {
             return
           }
 
+          // A whole group switched at once: the tab header carries one switch
+          // per group of more than one row, so this is the batch form of the
+          // two single switches above — one persist, one reapply.
+          const toggleTools = paramOf('toggleTools', 4000)
+          if (toggleTools !== null) {
+            const wanted = url.searchParams.get('enabled') === 'true'
+            const names = toggleTools.split(',').map((name) => name.trim()).filter((name) => name.length > 0)
+            const known = new Set((await toolsPayload(ctx, state)).tools.map((row) => row.name))
+            const usable = names.filter((name) => known.has(name))
+            if (usable.length === 0) {
+              sendJson(res, 400, { ok: false, kind: 'tools', error: 'no known tool in that list' })
+              return
+            }
+            for (const name of usable) state.tools = withName(state.tools, name, wanted)
+            try {
+              await saveState(state)
+            } catch (error) {
+              try { ctx.logger?.warn?.('dsh-customizer: cannot persist the tool switches: %s', String(error?.message ?? error)) } catch { /* no logger */ }
+            }
+            controller?.syncAll()
+            sendJson(res, 200, await toolsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
+          const togglePrompts = paramOf('togglePrompts', 4000)
+          if (togglePrompts !== null) {
+            const wanted = url.searchParams.get('enabled') === 'true'
+            const names = togglePrompts.split(',').map((name) => name.trim()).filter((name) => name.length > 0)
+            const before = await promptsPayload(ctx, state)
+            const listed = new Set(before.prompts.map((row) => row.name))
+            const usable = names.filter((name) => listed.has(name) || promptNamesOff(state).includes(name))
+            if (usable.length === 0) {
+              sendJson(res, 400, { ok: false, kind: 'prompts', error: 'no known prompt section in that list' })
+              return
+            }
+            for (const name of usable) state.prompts = withName(state.prompts, name, wanted)
+            try {
+              await saveState(state)
+            } catch (error) {
+              try { ctx.logger?.warn?.('dsh-customizer: cannot persist the prompt switches: %s', String(error?.message ?? error)) } catch { /* no logger */ }
+            }
+            controller?.syncAll()
+            sendJson(res, 200, await promptsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
           if (view === 'tools' || view === 'prompts') {
             if (method === 'HEAD') {
               res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })

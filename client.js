@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.12'
+    const CLIENT_VERSION = '1.2.13'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -927,6 +927,7 @@ window.__ModuleLoader__.load({
       'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
       '.dsh-mcpc-group{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;',
       'background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
+      '.dsh-mcpc-groupright{display:inline-flex;align-items:center;gap:8px;flex:none}',
       '.dsh-mcpc-grouphead{display:flex;align-items:center;justify-content:space-between;gap:8px;',
       'padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)}',
       '.dsh-mcpc-groupname{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);',
@@ -1213,8 +1214,11 @@ window.__ModuleLoader__.load({
       return head
     }
 
-    /** One bordered group: a headline with its counters, then its rows. */
-    function groupElement(name, bits, nodes) {
+    /**
+     * One bordered group: a headline with its counters (and, for a group of
+     * more than one row, a switch for the whole group), then its rows.
+     */
+    function groupElement(name, bits, nodes, toggle) {
       const section = document.createElement('div')
       section.className = 'dsh-mcpc-group'
       const head = document.createElement('div')
@@ -1222,14 +1226,27 @@ window.__ModuleLoader__.load({
       const label = document.createElement('span')
       label.className = 'dsh-mcpc-groupname'
       label.textContent = String(name ?? '')
+      const right = document.createElement('span')
+      right.className = 'dsh-mcpc-groupright'
       const meta = document.createElement('span')
       meta.className = 'dsh-mcpc-groupmeta'
       meta.textContent = bits.filter((bit) => typeof bit === 'string' && bit.length > 0).join(' \u00b7 ')
+      right.appendChild(meta)
+      if (toggle !== undefined && toggle !== null) {
+        right.appendChild(switchElement(toggle.on, toggle.title, toggle.flip))
+      }
       head.appendChild(label)
-      head.appendChild(meta)
+      head.appendChild(right)
       section.appendChild(head)
       for (const node of nodes) section.appendChild(node)
       return section
+    }
+
+    /** Switch for a whole group: on only when every row of the group is on. */
+    function groupToggle(rows, title, flip) {
+      if (rows.length < 2) return undefined
+      const allOn = rows.every((row) => row.enabled !== false)
+      return { on: allOn, title, flip }
     }
 
     /** Group counters as shown in a group headline. */
@@ -1276,10 +1293,13 @@ window.__ModuleLoader__.load({
         return
       }
       for (const group of groups) {
-        const nodes = []
-        for (const row of rows) if (row?.group === group.name) nodes.push(toolRow(row, state))
-        if (nodes.length === 0) continue
-        body.appendChild(groupElement(group.name, groupBits(group), nodes))
+        const members = rows.filter((row) => row?.group === group.name)
+        if (members.length === 0) continue
+        const names = members.map((row) => row.name)
+        const toggle = groupToggle(members, 'Turn every tool in this group on or off', (wanted) => {
+          flipMany(state, 'tools', 'toggleTools', names, wanted)
+        })
+        body.appendChild(groupElement(group.name, groupBits(group), members.map((row) => toolRow(row, state)), toggle))
       }
     }
 
@@ -1323,10 +1343,13 @@ window.__ModuleLoader__.load({
         return
       }
       for (const group of groups) {
-        const nodes = []
-        for (const row of rows) if (row?.group === group.name) nodes.push(promptRow(row, state))
-        if (nodes.length === 0) continue
-        body.appendChild(groupElement(group.name, groupBits(group), nodes))
+        const members = rows.filter((row) => row?.group === group.name)
+        if (members.length === 0) continue
+        const names = members.map((row) => row.name)
+        const toggle = groupToggle(members, 'Turn every section in this group on or off', (wanted) => {
+          flipMany(state, 'prompts', 'togglePrompts', names, wanted)
+        })
+        body.appendChild(groupElement(group.name, groupBits(group), members.map((row) => promptRow(row, state)), toggle))
       }
     }
 
@@ -1445,6 +1468,28 @@ window.__ModuleLoader__.load({
       maskOwnContent(state, false)
     }
 
+    /** Switch a whole group at once: one request, one persist, one reapply. */
+    function flipMany(state, kind, param, names, wanted) {
+      if (state === null || names.length === 0) return
+      if (state.busy[kind] === true) return
+      state.busy[kind] = true
+      const url = ENDPOINT + '?view=' + kind + '&' + param + '=' + encodeURIComponent(names.join(','))
+        + '&enabled=' + (wanted === true ? 'true' : 'false') + '&client=' + CLIENT_VERSION
+      fetchJson(url)
+        .then((payload) => {
+          state.busy[kind] = false
+          if (payload === null || typeof payload !== 'object') return
+          state.payload[kind] = payload
+          if (state.tab === kind) paintPage(state, kind)
+          if (payload.ok !== true) report('page-toggle-error', String(payload.error ?? 'inconnu'))
+          else report('page-toggle-group', kind + ' x' + names.length + '=' + String(wanted === true))
+        })
+        .catch((error) => {
+          state.busy[kind] = false
+          report('page-toggle-error', String(error?.message ?? error))
+        })
+    }
+
     function flipPage(state, kind, param, name, wanted) {
       const url = ENDPOINT + '?view=' + kind + '&' + param + '=' + encodeURIComponent(name)
         + '&enabled=' + (wanted === true ? 'true' : 'false') + '&client=' + CLIENT_VERSION
@@ -1536,6 +1581,7 @@ window.__ModuleLoader__.load({
         tab: null,
         payload: { tools: null, prompts: null },
         loading: { tools: false, prompts: false },
+        busy: { tools: false, prompts: false },
         flip: (kind, param, name, wanted) => flipPage(state, kind, param, name, wanted),
         observer: null,
         timer: null,
