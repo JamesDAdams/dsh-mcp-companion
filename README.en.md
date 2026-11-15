@@ -70,11 +70,12 @@ The panel's **Skill / MCP** page gets two extra tabs, appended right after its o
 - Each row shows the exact name the model receives, the description, the **schema weight in tokens** and a switch.
 - Switching a tool off removes it from the model schema **for every agent**, without touching anything else. The header adds up the active tools and their weight.
 - A tool that cannot be restricted (`locked`) shows a disabled switch: `ctx.tools.restrict()` only accepts names that were visible before restriction.
+- The list scrolls inside its own frame: the tab strip stays fixed at the top.
 
 ### System prompt
 
 - One row per section assembled by `ctx.systemPrompt`: `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<server>`, `app:web-surface`, `harness:source`…
-- Each row shows the assembly order, the character count, the token weight and a switch. Clicking the name expands the section's exact text.
+- Each row shows a **description** of the section, its assembly order, its token weight and a switch. Clicking the name expands the section's exact text.
 - Switching a section off removes it from **every** conversation's prompt, without touching the plugin that registered it.
 
 Both settings are **profile-wide** (like the panel's own switches) and persist in the same state file (`tools` and `prompts`).

@@ -601,6 +601,38 @@ function promptRegistry(ctx) {
 }
 
 /**
+ * One-line description of a prompt section, for the page tab.
+ *
+ * Known sections get a hand-written sentence; anything a plugin contributes
+ * later falls back to the first line of its own text so the row is never bare.
+ */
+function describeSection(name, text) {
+  const fixed = {
+    'harness:identity': 'Fixed opener: the identity the harness gives the model.',
+    'deployment:persona-prefix': 'Persona text rendered before the harness guidance.',
+    'deployment:persona-suffix': 'Persona text rendered after the harness guidance.',
+    'plan:policy': 'Plan-mode policy; empty unless plan mode is active.',
+    'team:policy': 'Rules the agent team is expected to follow.',
+    'tools:ptc-only': 'How the code-execution transport is used.',
+    'tools:sdk': 'Generated SDK documentation for the tools of this step.',
+    'context:file-reference': 'How @file references are resolved.',
+    'mcp-resource-servers': 'Instructions for the MCP resource tools.',
+    'ui:deliverable-file-references': 'How deliverable file references are presented.',
+    'harness:source': 'Where this harness build keeps its source.',
+    'app:web-surface': 'Which web surface this session runs in.',
+    'free-search:engines': 'The configured search engines and how to query them.',
+  }
+  if (Object.hasOwn(fixed, name)) return fixed[name]
+  if (name.startsWith('mcp:')) return 'Instructions published by the MCP server ' + name.slice(4) + '.'
+  if (name.startsWith('tool:')) return 'Guidance for using the ' + name.slice(5) + ' tool.'
+  if (name.startsWith('context:')) return 'Runtime context ' + name.slice(8) + '.'
+  const body = typeof text === 'string' ? text : ''
+  const first = body.split('\n').map((line) => line.trim()).find((line) => line.length > 0)
+  if (first !== undefined) return first.length > 150 ? first.slice(0, 147) + '\u2026' : first
+  return 'Prompt section contributed by a plugin.'
+}
+
+/**
  * Every system-prompt section, in the order the model receives it.
  *
  * `assemble()` is preferred because it resolves text callbacks exactly the way
@@ -636,6 +668,7 @@ async function promptsPayload(ctx, state, wantApplied) {
       empty: body.length === 0,
       dynamic: dynamic === true,
       enabled: !off.has(name),
+      description: describeSection(name, body),
       truncated: body.length > PROMPT_TEXT_LIMIT,
       text: body.length > PROMPT_TEXT_LIMIT ? body.slice(0, PROMPT_TEXT_LIMIT) : body,
     })

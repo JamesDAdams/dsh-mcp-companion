@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.4'
+    const CLIENT_VERSION = '1.2.7'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -917,6 +917,9 @@ window.__ModuleLoader__.load({
       '[data-mcpc-active="1"]>[role="tablist"]>button:not([data-mcpc-tab])::after{transform:scaleX(0)!important}',
       '.dsh-mcpc-body{display:none;flex-direction:column;gap:12px;width:100%;box-sizing:border-box;',
       'flex:1;min-height:0;overflow-y:auto;padding:0 clamp(20px,3vw,40px) 40px;max-width:1040px;margin:0 auto}',
+      // The body is a flex column: without this its children shrink to the
+      // capped height and the rows get clipped instead of scrolling.
+      '.dsh-mcpc-body>*{flex:0 0 auto}',
       '.dsh-mcpc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}',
       '.dsh-mcpc-title{font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
       '.dsh-mcpc-caption{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:2px 0 0}',
@@ -1103,14 +1106,15 @@ window.__ModuleLoader__.load({
       name.textContent = row.name
       const sub = document.createElement('div')
       sub.className = 'dsh-mcpc-rowsub'
-      const bits = []
-      bits.push('order ' + String(row.order))
-      if (row.empty === true) bits.push('empty')
-      else bits.push(String(row.chars) + ' chars')
-      if (row.dynamic === true) bits.push('dynamic')
-      sub.textContent = bits.join(' \u00b7 ')
+      const description = typeof row.description === 'string' ? row.description.trim() : ''
+      if (description !== '') sub.textContent = description
       text.appendChild(name)
-      text.appendChild(sub)
+      if (description !== '') text.appendChild(sub)
+
+      const details = []
+      details.push(row.empty === true ? 'empty' : String(row.chars) + ' chars')
+      if (row.dynamic === true) details.push('dynamic')
+      element.title = row.name + ' \u00b7 ' + details.join(' \u00b7 ')
 
       const pre = document.createElement('pre')
       pre.className = 'dsh-mcpc-pre'
@@ -1132,7 +1136,13 @@ window.__ModuleLoader__.load({
       tok.textContent = tokens
       tok.title = 'Weight of this section in the system prompt'
 
+      const order = document.createElement('span')
+      order.className = 'dsh-mcpc-tag'
+      order.textContent = 'order ' + String(row.order)
+      order.title = 'Place of this section in the assembled prompt'
+
       element.appendChild(text)
+      element.appendChild(order)
       if (tokens !== '') element.appendChild(tok)
       element.appendChild(switchElement(row.enabled === true, 'Turn this section on or off', (wanted) => {
         state.flip('prompts', 'togglePrompt', row.name, wanted)
@@ -1326,6 +1336,37 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Keep the tab body inside the viewport so its own list can scroll.
+     *
+     * The panel page may be as tall as its content and clipped by its own
+     * `overflow:hidden`: a long list would then be cut with no scrollbar. Sizing
+     * the body to the space left under the tab strip gives it a definite height,
+     * which is what turns `overflow-y:auto` into a real scroll.
+     */
+    function fitBody(state) {
+      if (state === null || state === undefined || state.tab === null) return
+      try {
+        const viewport = typeof window !== 'undefined' && Number.isFinite(window.innerHeight) ? window.innerHeight : 0
+        if (viewport <= 0) return
+        const rect = state.body.getBoundingClientRect()
+        const available = Math.max(180, Math.floor(viewport - rect.top - 16))
+        const current = Number.parseInt(state.body.style.maxHeight, 10)
+        if (Number.isFinite(current) && Math.abs(current - available) < 3) return
+        state.body.style.maxHeight = available + 'px'
+        if (state.reported !== true) {
+          state.reported = true
+          const rootRect = state.root.getBoundingClientRect()
+          report('page-metrics', 'vh=' + viewport + ' top=' + Math.round(rect.top)
+            + ' avail=' + available + ' scroll=' + state.body.scrollHeight
+            + ' client=' + state.body.clientHeight + ' rootH=' + Math.round(rootRect.height)
+            + ' overflow=' + String(state.body.style.overflowY))
+        }
+      } catch {
+        // A page without layout still renders, just without the cap.
+      }
+    }
+
     function selectTab(state, id) {
       if (state === null) return
       state.tab = id
@@ -1337,6 +1378,7 @@ window.__ModuleLoader__.load({
       state.body.style.display = 'flex'
       state.body.setAttribute('data-mcpc-view', id)
       maskOwnContent(state, true)
+      fitBody(state)
       // The body is a single subtree shared by both views: switching tabs must
       // repaint it even when that view was already loaded.
       paintPage(state, id)
@@ -1474,9 +1516,12 @@ window.__ModuleLoader__.load({
       const repair = () => {
         if (state.tab === null) return
         if (state.body.style.display !== 'flex') state.body.style.display = 'flex'
+        fitBody(state)
         maskOwnContent(state, true)
         if (state.body.childNodes.length === 0 && state.payload[state.tab] === null) paintPage(state, state.tab)
       }
+      const onResize = () => { try { fitBody(state) } catch { /* layout not ready */ } }
+      try { window.addEventListener('resize', onResize) } catch { /* no window */ }
       try {
         if (typeof MutationObserver === 'function') {
           state.observer = new MutationObserver(() => {
@@ -1502,6 +1547,7 @@ window.__ModuleLoader__.load({
       state.dispose = () => {
         state.tab = null
         try { strip.removeEventListener('click', onStripClick, true) } catch { /* already gone */ }
+        try { window.removeEventListener('resize', onResize) } catch { /* no window */ }
         try { state.observer?.disconnect?.() } catch { /* already gone */ }
         if (state.timer !== null) clearInterval(state.timer)
         state.timer = null

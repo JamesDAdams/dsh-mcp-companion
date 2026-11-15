@@ -70,11 +70,12 @@ La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la
 - Chaque ligne : le nom exact que le modèle reçoit, la description, le **poids du schéma en tokens** et un interrupteur.
 - Couper un outil le retire du schéma du modèle **pour tous les agents**, sans toucher au reste. L'en-tête additionne les outils actifs et leur poids.
 - Un outil non restreignable (`locked`) est affiché avec son interrupteur désactivé : `ctx.tools.restrict()` n'accepte que les noms visibles avant restriction.
+- La liste défile dans son propre cadre : la barre d'onglets reste fixe en haut.
 
 ### System prompt
 
 - Une ligne par section du prompt assemble par `ctx.systemPrompt` : `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<serveur>`, `app:web-surface`, `harness:source`…
-- Chaque ligne affiche l'ordre d'assemblage, le nombre de caractères, le poids en tokens et un interrupteur. Un clic sur le nom déplie le texte exact de la section.
+- Chaque ligne affiche une **description** de la section, son ordre d'assemblage, son poids en tokens et un interrupteur. Un clic sur le nom déplie le texte exact de la section.
 - Couper une section la retire du prompt de **toutes** les conversations, sans toucher au plugin qui l'a enregistrée.
 
 Les deux réglages sont **globaux au profil** (comme les interrupteurs du panneau) et persistent dans le même fichier d'état (`tools` et `prompts`).
