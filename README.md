@@ -22,6 +22,7 @@ Conséquence : ils n'apparaissent jamais dans la liste, et même ajoutés, leur 
 - Ajoute une carte **`wincu`** avec ses outils réels (26 dans la configuration computer use complète).
 - Ajoute une carte **`mcp-resource-servers`** avec les trois outils du pont de ressources MCP.
 - Affiche le **poids en tokens** sur la page MCP du panneau : une pastille par serveur dans l'en-tête de la carte (`5.9k tok`) et une par outil dans la liste (`80 tok`), calculées avec l'heuristique du harnais, donc identiques aux chiffres de l'onglet Tools.
+- Affiche le **poids en tokens** de chaque skill sur la page Skills : une pastille par ligne (la taille du `SKILL.md` tel qu'il est chargé) et le **total** dans la barre d'outils. Le poids du catalogue (nom + description, présent à chaque requête) est rappelé dans l'infobulle.
 - Rend les interrupteurs **fonctionnels** :
   - désactivé → les outils du serveur sont retirés du schéma du modèle pour tous les agents ;
   - réactivé → ils reviennent ;

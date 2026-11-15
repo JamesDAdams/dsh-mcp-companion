@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.16'
+    const CLIENT_VERSION = '1.2.21'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -930,6 +930,9 @@ window.__ModuleLoader__.load({
       '.dsh-mcpc-tokchip{font-size:10.5px;line-height:15px;padding:1px 6px;border-radius:5px;flex:none;white-space:nowrap;',
       '  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l2)}',
       '.MCP_toolRow .dsh-mcpc-tokchip{margin-left:auto}',
+      '.SKV_catalogHeading .dsh-mcpc-tokchip{margin-left:8px}',
+      '.SKV_toolButtons .dsh-mcpc-tokchip{margin-left:8px;align-self:center}',
+      '.SKV_rowControls .dsh-mcpc-tokchip{margin-left:2px}',
       '.dsh-mcpc-groupright{display:inline-flex;align-items:center;gap:8px;flex:none}',
       '.dsh-mcpc-grouphead{display:flex;align-items:center;justify-content:space-between;gap:8px;',
       'padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)}',
@@ -1623,6 +1626,7 @@ window.__ModuleLoader__.load({
           if (state.body.isConnected === false) { disposePage(state); return }
           repair()
           tickMcp(state)
+          tickSkills(state)
         } catch { /* ignore */ }
       }, 250)
 
@@ -1689,6 +1693,70 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Skill prices, cached like the inventory: bodies change rarely. */
+    const skillsCache = { value: null, at: 0, pending: null }
+
+    function refreshSkills() {
+      const now = Date.now()
+      if (skillsCache.value !== null && now - skillsCache.at < 15000) return Promise.resolve(skillsCache.value)
+      if (skillsCache.pending !== null) return skillsCache.pending
+      skillsCache.pending = fetchJson(ENDPOINT + '?view=skills&client=' + CLIENT_VERSION)
+        .then((payload) => {
+          if (payload !== null && typeof payload === 'object') {
+            skillsCache.value = payload
+            skillsCache.at = Date.now()
+          }
+          return skillsCache.value
+        })
+        .catch(() => skillsCache.value)
+        .finally(() => { skillsCache.pending = null })
+      return skillsCache.pending
+    }
+
+    /**
+     * Token chips on the panel's own Skills cards: one per skill, plus the
+     * total in the catalog headline. Same rules as the MCP chips: our own
+     * nodes, idempotent, repaired on the next tick when the panel repaints.
+     */
+    function tickSkills(state) {
+      if (state === null) return
+      try {
+        const root = state.root
+        if (String(root?.getAttribute?.('data-tab') ?? '') !== 'skills') return
+        const cards = []
+        for (const selector of ['.SKV_card', '.SKV_cardRow']) {
+          for (const node of Array.from(root.querySelectorAll?.(selector) ?? [])) {
+            if (node !== null && node !== undefined && cards.indexOf(node) < 0) cards.push(node)
+          }
+        }
+        const payload = skillsCache.value
+        if (payload === null) {
+          if (cards.length > 0) refreshSkills()
+          return
+        }
+        const rows = Array.isArray(payload.skills) ? payload.skills : []
+        if (rows.length === 0) return
+        const byName = new Map(rows.map((row) => [row.name, row]))
+        for (const card of cards) {
+          // v2.1.6 rows: SKV_rowName holds the name, SKV_rowControls the actions.
+          const name = String(card.querySelector?.('.SKV_rowName')?.textContent ?? '').trim()
+          if (name === '') continue
+          const skill = byName.get(name)
+          if (skill === undefined) continue
+          const controls = card.querySelector?.('.SKV_rowControls') ?? card.querySelector?.('.SKV_rowText')
+          if (controls === null || controls === undefined) continue
+          chipInto(controls, skill.tokens, 'Tokens this skill body weighs when loaded (its catalog line costs '
+            + formatTokens(skill.catalog) + ')', 'skill')
+        }
+        const heading = root.querySelector?.('.SKV_toolButtons') ?? root.querySelector?.('.SKV_catalogHeading')
+        if (heading !== null && heading !== undefined) {
+          chipInto(heading, payload.summary?.tokens, 'Tokens every listed skill body weighs in total', 'total')
+        }
+      } catch {
+        // A price chip must never break the panel.
+      }
+    }
+
     /** Keep exactly one price chip of that kind in `container`. */
     function chipInto(container, tokens, title, kind) {
       let chip = null
@@ -1727,7 +1795,7 @@ window.__ModuleLoader__.load({
       if (PAGE !== null && (root === null || root !== PAGE.root || pageAlive(PAGE) === false)) {
         disposePage(PAGE)
       }
-      if (root !== null && PAGE !== null) { tickMcp(PAGE); return }
+      if (root !== null && PAGE !== null) { tickMcp(PAGE); tickSkills(PAGE); return }
       if (root === null || PAGE !== null) return
       ensurePageStyles()
       const state = decoratePage(root)

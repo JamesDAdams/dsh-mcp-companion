@@ -73,7 +73,9 @@ function groupsOf(rows) {
  */
 
 const ROUTE = '/local-dsh-customizer/mcp-servers'
-import { attachDisableController, loadState, saveState } from './filter.js'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { attachDisableController, dshHome, loadState, saveState } from './filter.js'
 const MCP_CLIENT_PACKAGE = '@deepseek-ai/dsh-mcp-client'
 /** The MCP resource bridge's shared tools, exposed by @deepseek-ai/dsh-mcp-resources. */
 const RESOURCE_BRIDGE_PACKAGE = '@deepseek-ai/dsh-mcp-resources'
@@ -509,6 +511,189 @@ function estimateSchemaTokens(schema) {
     return Math.ceil(JSON.stringify(schema).length / CHARS_PER_TOKEN)
   } catch {
     return 0
+  }
+}
+
+/** Heuristic size of a character count, matching the harness' token meter. */
+function estimateCharsTokens(chars) {
+  const value = typeof chars === 'number' && Number.isFinite(chars) ? chars : 0
+  return value > 0 ? Math.ceil(value / CHARS_PER_TOKEN) : 0
+}
+
+/** Heuristic size of plain text (a skill body, a catalog line…). */
+function estimateTextTokens(text) {
+  const value = typeof text === 'string' ? text : ''
+  if (value.length === 0) return 0
+  return Math.ceil(value.length / CHARS_PER_TOKEN)
+}
+
+/**
+ * Read the front matter of one SKILL.md.
+ *
+ * The body is the whole file: that is what the model receives when the skill is
+ * loaded, so its size is what the skill costs.
+ */
+function readSkillFile(file) {
+  let text = ''
+  try {
+    if (statSync(file).size > 2_000_000) return undefined
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return undefined
+  }
+  const folder = file.replace(/[\\/][^\\/]+$/, '')
+  const name = folder.split(/[\\/]/).pop() ?? ''
+  const declared = /^---\s*$([\s\S]*?)^---\s*$/m.exec(text)
+  const meta = declared === null ? '' : declared[1]
+  const field = (key) => {
+    const hit = new RegExp('^' + key + '\\s*:\\s*(.+)$', 'm').exec(meta)
+    if (hit === null) return undefined
+    return hit[1].trim().replace(/^['"]|['"]$/g, '')
+  }
+  return {
+    name: field('name') ?? name,
+    description: field('description') ?? '',
+    path: file,
+    chars: text.length,
+  }
+}
+
+/** SKILL.md files under `dir`, depth-limited, skipping nested node_modules. */
+function skillFilesIn(dir, depth, out) {
+  if (depth > 4) return out
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' && depth > 0) continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) skillFilesIn(full, depth + 1, out)
+    else if (entry.name === 'SKILL.md') {
+      const skill = readSkillFile(full)
+      if (skill !== undefined) out.push(skill)
+    }
+  }
+  return out
+}
+
+/**
+ * Every skill file the panel's Global list can show: the user's own skills
+ * (`<dshHome>/skills`) and the ones plugin packages ship
+ * (`<profile>/node_modules/<package>/…/SKILL.md`).
+ */
+function skillFilesOnDisk() {
+  const found = []
+  skillFilesIn(join(dshHome(), 'skills'), 1, found)
+  let profiles = []
+  try {
+    profiles = readdirSync(join(dshHome(), 'profiles'), { withFileTypes: true })
+  } catch {
+    profiles = []
+  }
+  for (const profile of profiles) {
+    if (!profile.isDirectory()) continue
+    const modules = join(dshHome(), 'profiles', profile.name, 'node_modules')
+    let entries = []
+    try {
+      entries = readdirSync(modules, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const root = join(modules, entry.name)
+      if (entry.name.startsWith('@')) {
+        let scoped = []
+        try {
+          scoped = readdirSync(root, { withFileTypes: true })
+        } catch {
+          scoped = []
+        }
+        for (const inner of scoped) {
+          if (inner.isDirectory()) skillFilesIn(join(root, inner.name), 1, found)
+        }
+      } else skillFilesIn(root, 1, found)
+    }
+  }
+  return found
+}
+
+/**
+ * The skill catalog, priced two ways: how much a skill costs once its body is
+ * loaded, and how much its catalog line already costs on every request.
+ */
+async function skillsPayload(ctx) {
+  const skills = serviceOf(ctx, 'skills')
+  const merged = new Map()
+  // Files first: that is what the panel lists, including the user's own skills
+  // and the ones plugin packages ship.
+  for (const file of skillFilesOnDisk()) {
+    if (merged.has(file.name)) continue
+    merged.set(file.name, {
+      name: file.name,
+      description: asString(file.description, 200) ?? '',
+      source: 'filesystem',
+      provider: 'files',
+      chars: file.chars,
+      tokens: estimateCharsTokens(file.chars),
+      catalog: 0,
+    })
+  }
+  // Then the registry: it knows the bundled skills and the exact bodies.
+  if (skills !== undefined && typeof skills.list === 'function') {
+    let summaries = []
+    let scope
+    try {
+      const agents = serviceOf(ctx, 'agents')
+      const list = typeof agents?.list === 'function' ? agents.list() : []
+      const agent = Array.isArray(list) ? list[0] : undefined
+      scope = agent?.ctx
+    } catch { scope = undefined }
+    try {
+      summaries = await skills.list(scope !== undefined ? { scope } : {})
+    } catch {
+      summaries = []
+    }
+    for (const summary of Array.isArray(summaries) ? summaries : []) {
+      const name = asString(summary?.name)
+      if (name === undefined) continue
+      const description = asString(summary?.description, 200) ?? ''
+      let chars = merged.get(name)?.chars ?? 0
+      try {
+        const definition = typeof skills.get === 'function' ? await skills.get(name, {}) : undefined
+        if (typeof definition?.content === 'string') chars = definition.content.length
+      } catch { /* keep the file size */ }
+      merged.set(name, {
+        name,
+        description,
+        source: asString(summary?.source) ?? 'runtime',
+        provider: asString(summary?.provider) ?? '',
+        chars,
+        tokens: estimateCharsTokens(chars),
+        catalog: 0,
+      })
+    }
+  }
+  const rows = [...merged.values()]
+  for (const row of rows) row.catalog = estimateTextTokens(row.name + ' ' + row.description)
+  rows.sort((a, b) => a.name.localeCompare(b.name))
+  if (rows.length === 0) {
+    return { ok: false, kind: 'skills', error: 'no skill file was found', skills: [] }
+  }
+  return {
+    ok: true,
+    kind: 'skills',
+    generatedAt: new Date().toISOString(),
+    summary: {
+      skills: rows.length,
+      tokens: rows.reduce((total, row) => total + row.tokens, 0),
+      catalog: rows.reduce((total, row) => total + row.catalog, 0),
+      loaded: rows.filter((row) => row.chars > 0).length,
+    },
+    skills: rows,
   }
 }
 
@@ -1225,6 +1410,11 @@ export function apply(ctx) {
             }
             controller?.syncAll()
             sendJson(res, 200, await promptsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
+          if (view === 'skills') {
+            sendJson(res, 200, await skillsPayload(ctx))
             return
           }
 
