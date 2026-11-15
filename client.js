@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.1.7'
+    const CLIENT_VERSION = '1.2.3'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -881,11 +881,682 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /* ------------------------------------------------------------------ */
+    /* 3. Skill/MCP page tabs: tool definitions and prompt sections        */
+    /* ------------------------------------------------------------------ */
+    /*
+     * dsh-skill-mcp-panel renders ONE page in the `main` slot with its own
+     * "Skills | MCP" tab strip. It exposes no slot inside that page, so the
+     * only additive way to add a tab is to decorate its rendered DOM:
+     *
+     *   - two buttons cloned from its own tab button (same classes, same look)
+     *     are appended to its `[role="tablist"]`, so the strip is untouched;
+     *   - one body element is appended to the page root and shown only while
+     *     one of our tabs is selected;
+     *   - its own content stays mounted and is hidden inline, and its own tab
+     *     highlight is only de-emphasized by a stylesheet rule keyed on
+     *     `data-mcpc-active`, so React state is never fought over;
+     *   - a MutationObserver repairs the few things React can undo (a swapped
+     *     content node reappearing, the page being re-rendered).
+     *
+     * Every entry point is guarded: a panel that changes shape must leave the
+     * page usable, with our tabs simply absent.
+     */
+
+    const PAGE_STYLE_ID = 'dsh-mcp-companion-page-styles'
+    const PAGE_TABS = [
+      { id: 'tools', label: 'Outils', heading: 'D\u00e9finitions d\u2019outils' },
+      { id: 'prompts', label: 'Prompt syst\u00e8me', heading: 'Sections du prompt syst\u00e8me' },
+    ]
+
+    const PAGE_CSS = [
+      // The panel's own tab stays React-active while ours is selected; only its
+      // highlight is muted (the underline is drawn by the plugin's ::after).
+      '[data-mcpc-active="1"]>[role="tablist"]>button:not([data-mcpc-tab]){color:var(--dsw-alias-label-secondary);',
+      'font-weight:400}',
+      '[data-mcpc-active="1"]>[role="tablist"]>button:not([data-mcpc-tab])::after{transform:scaleX(0)!important}',
+      '.dsh-mcpc-body{display:none;flex-direction:column;gap:12px;width:100%;box-sizing:border-box;',
+      'flex:1;min-height:0;overflow-y:auto;padding:0 clamp(20px,3vw,40px) 40px;max-width:1040px;margin:0 auto}',
+      '.dsh-mcpc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}',
+      '.dsh-mcpc-title{font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      '.dsh-mcpc-caption{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:2px 0 0}',
+      '.dsh-mcpc-total{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);',
+      'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
+      '.dsh-mcpc-group{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;',
+      'background:var(--dsw-alias-bg-layer-3);overflow:hidden}',
+      '.dsh-mcpc-grouphead{display:flex;align-items:center;justify-content:space-between;gap:8px;',
+      'padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border-bottom:1px solid var(--dsw-alias-border-l2)}',
+      '.dsh-mcpc-groupname{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary);',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcpc-groupmeta{font-size:11.5px;color:var(--dsw-alias-label-tertiary);',
+      'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
+      '.dsh-mcpc-row{display:flex;align-items:center;gap:10px;padding:8px 12px;',
+      'border-bottom:1px solid var(--dsw-alias-border-l2)}',
+      '.dsh-mcpc-row:last-child{border-bottom:none}',
+      '.dsh-mcpc-row[data-off="true"] .dsh-mcpc-rowname{color:var(--dsw-alias-label-tertiary)}',
+      '.dsh-mcpc-rowtext{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;cursor:pointer;',
+      'background:0 0;border:0;padding:0;text-align:left;font:inherit;color:inherit}',
+      '.dsh-mcpc-rowtext[data-static="true"]{cursor:default}',
+      '.dsh-mcpc-rowname{font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcpc-rowsub{font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary);',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcpc-tok{font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary);',
+      'font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}',
+      '.dsh-mcpc-switch{width:36px;height:20px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);',
+      'background:var(--dsw-alias-bg-layer-1);position:relative;cursor:pointer;flex:none;padding:0;',
+      'transition:background-color .18s ease,border-color .18s ease}',
+      '.dsh-mcpc-switch[data-on="true"]{background:var(--dsw-alias-label-primary);border-color:transparent}',
+      '.dsh-mcpc-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;',
+      'background:var(--dsw-alias-label-secondary);transition:transform .18s ease,background-color .18s ease;display:block}',
+      '.dsh-mcpc-switch[data-on="true"]>.dsh-mcpc-knob{transform:translateX(16px);background:var(--dsw-alias-bg-base,#000)}',
+      '.dsh-mcpc-switch:disabled{opacity:.4;cursor:default}',
+      '.dsh-mcpc-pre{margin:0;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l2);',
+      'background:var(--dsw-alias-markdown-code-block,var(--dsw-alias-bg-layer-1));',
+      'color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;',
+      'font-size:11.5px;line-height:17px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}',
+      '.dsh-mcpc-note{font-size:12.5px;line-height:20px;color:var(--dsw-alias-label-tertiary);padding:6px 2px}',
+      '.dsh-mcpc-note[data-error="true"]{color:var(--dsw-alias-state-error-primary)}',
+      '.dsh-mcpc-tag{font-size:10.5px;line-height:15px;padding:1px 6px;border-radius:5px;',
+      'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);flex:none;white-space:nowrap}',
+    ].join('')
+
+    /** The decorated page, or null while the panel is closed. */
+    let PAGE = null
+
+    function ensurePageStyles() {
+      try {
+        const existing = document.getElementById(PAGE_STYLE_ID)
+        if (existing !== null) {
+          if (existing.textContent !== PAGE_CSS) existing.textContent = PAGE_CSS
+          return
+        }
+        const style = document.createElement('style')
+        style.id = PAGE_STYLE_ID
+        style.textContent = PAGE_CSS
+        document.head.appendChild(style)
+      } catch {
+        // Unstyled tabs are still usable.
+      }
+    }
+
+    function childBy(element, match) {
+      if (element === null || element === undefined) return null
+      const kids = element.children
+      if (kids === null || kids === undefined) return null
+      for (let index = 0; index < kids.length; index += 1) {
+        const kid = kids[index]
+        try {
+          if (match(kid) === true) return kid
+        } catch {
+          // A single odd node must not stop the search.
+        }
+      }
+      return null
+    }
+
+    function tagIs(element, name) {
+      return String(element?.tagName ?? '').toUpperCase() === name
+    }
+
+    /** The panel page: a `[data-tab]` root whose second child is a tab strip. */
+    function findPageRoot() {
+      try {
+        if (typeof document.querySelectorAll !== 'function') return null
+        const nodes = document.querySelectorAll('[data-tab]')
+        for (let index = 0; index < nodes.length; index += 1) {
+          const node = nodes[index]
+          const strip = childBy(node, (kid) => kid?.getAttribute?.('role') === 'tablist')
+          if (strip === null) continue
+          const tab = String(node.getAttribute?.('data-tab') ?? '')
+          if (tab !== 'skills' && tab !== 'mcp') continue
+          let buttons = 0
+          for (let next = 0; next < strip.children.length; next += 1) {
+            if (tagIs(strip.children[next], 'BUTTON')) buttons += 1
+          }
+          if (buttons >= 2) return node
+        }
+      } catch {
+        // A page without the panel simply has no root.
+      }
+      return null
+    }
+
+    function noteElement(text, isError) {
+      const element = document.createElement('div')
+      element.className = 'dsh-mcpc-note'
+      if (isError === true) element.setAttribute('data-error', 'true')
+      element.textContent = text
+      return element
+    }
+
+    function switchElement(on, title, onFlip) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'dsh-mcpc-switch'
+      button.setAttribute('role', 'switch')
+      button.setAttribute('aria-checked', on ? 'true' : 'false')
+      button.setAttribute('data-on', on ? 'true' : 'false')
+      button.setAttribute('title', title)
+      const knob = document.createElement('span')
+      knob.className = 'dsh-mcpc-knob'
+      button.appendChild(knob)
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onFlip(on !== true)
+      })
+      return button
+    }
+
+    /** One tool row: name, description, weight, switch. */
+    function toolRow(row, state) {
+      const element = document.createElement('div')
+      element.className = 'dsh-mcpc-row'
+      element.setAttribute('data-off', row.enabled === true ? 'false' : 'true')
+
+      const text = document.createElement('div')
+      text.className = 'dsh-mcpc-rowtext'
+      const name = document.createElement('div')
+      name.className = 'dsh-mcpc-rowname'
+      name.textContent = row.name
+      const sub = document.createElement('div')
+      sub.className = 'dsh-mcpc-rowsub'
+      const bits = []
+      if (typeof row.description === 'string' && row.description.length > 0) bits.push(row.description)
+      if (row.locked === true) bits.push('non restreignable')
+      if (row.serverDisabled === true) bits.push('serveur d\u00e9sactiv\u00e9')
+      sub.textContent = bits.join(' \u00b7 ')
+      text.appendChild(name)
+      if (sub.textContent !== '') text.appendChild(sub)
+
+      const tokens = formatTokens(row.tokens)
+      const tok = document.createElement('span')
+      tok.className = 'dsh-mcpc-tok'
+      tok.textContent = tokens
+      tok.title = 'Poids de ce sch\u00e9ma dans le contexte'
+
+      element.appendChild(text)
+      if (tokens !== '') element.appendChild(tok)
+      const locked = row.locked === true || row.serverDisabled === true
+      element.appendChild(switchElement(
+        row.enabled === true,
+        locked ? 'Verrouill\u00e9' : 'Activer ou d\u00e9sactiver cet outil',
+        (wanted) => { if (locked) return; state.flip('tools', 'toggleTool', row.name, wanted) },
+      ))
+      if (locked) element.lastChild.disabled = true
+      return element
+    }
+
+    /** One prompt-section row: name, order, weight, switch, expandable text. */
+    function promptRow(row, state) {
+      const wrap = document.createElement('div')
+      const element = document.createElement('div')
+      element.className = 'dsh-mcpc-row'
+      element.setAttribute('data-off', row.enabled === true ? 'false' : 'true')
+
+      const text = document.createElement('button')
+      text.type = 'button'
+      text.className = 'dsh-mcpc-rowtext'
+      const name = document.createElement('div')
+      name.className = 'dsh-mcpc-rowname'
+      name.textContent = row.name
+      const sub = document.createElement('div')
+      sub.className = 'dsh-mcpc-rowsub'
+      const bits = []
+      bits.push('ordre ' + String(row.order))
+      if (row.empty === true) bits.push('vide')
+      else bits.push(String(row.chars) + ' car.')
+      if (row.dynamic === true) bits.push('dynamique')
+      sub.textContent = bits.join(' \u00b7 ')
+      text.appendChild(name)
+      text.appendChild(sub)
+
+      const pre = document.createElement('pre')
+      pre.className = 'dsh-mcpc-pre'
+      const body = typeof row.text === 'string' ? row.text : ''
+      pre.textContent = body
+      pre.style.display = 'none'
+      const canExpand = body.length > 0
+      if (!canExpand) text.setAttribute('data-static', 'true')
+      text.addEventListener('click', () => {
+        if (!canExpand) return
+        const open = pre.style.display !== 'none'
+        pre.style.display = open ? 'none' : 'block'
+        text.setAttribute('aria-expanded', open ? 'false' : 'true')
+      })
+
+      const tokens = formatTokens(row.tokens)
+      const tok = document.createElement('span')
+      tok.className = 'dsh-mcpc-tok'
+      tok.textContent = tokens
+      tok.title = 'Poids de cette section dans le prompt syst\u00e8me'
+
+      element.appendChild(text)
+      if (tokens !== '') element.appendChild(tok)
+      element.appendChild(switchElement(row.enabled === true, 'Activer ou d\u00e9sactiver cette section', (wanted) => {
+        state.flip('prompts', 'togglePrompt', row.name, wanted)
+      }))
+      wrap.appendChild(element)
+      if (canExpand) wrap.appendChild(pre)
+      return wrap
+    }
+
+    function headElement(heading, caption, total) {
+      const head = document.createElement('div')
+      head.className = 'dsh-mcpc-head'
+      const left = document.createElement('div')
+      const title = document.createElement('div')
+      title.className = 'dsh-mcpc-title'
+      title.textContent = heading
+      const note = document.createElement('p')
+      note.className = 'dsh-mcpc-caption'
+      note.textContent = caption
+      left.appendChild(title)
+      left.appendChild(note)
+      head.appendChild(left)
+      if (typeof total === 'string' && total.length > 0) {
+        const right = document.createElement('div')
+        right.className = 'dsh-mcpc-total'
+        right.textContent = total
+        head.appendChild(right)
+      }
+      return head
+    }
+
+    function paintTools(state, payload) {
+      const body = state.body
+      while (body.firstChild !== null) body.removeChild(body.firstChild)
+      if (payload === null || payload === undefined) {
+        body.appendChild(headElement(
+          PAGE_TABS[0].heading,
+          'Chaque interrupteur retire l\u2019outil du mod\u00e8le dans toutes les conversations.',
+          '',
+        ))
+        body.appendChild(noteElement('Chargement\u2026', false))
+        return
+      }
+      const summary = payload?.summary ?? {}
+      const parts = []
+      if (typeof summary.on === 'number') parts.push(summary.on + (summary.on === 1 ? ' actif' : ' actifs'))
+      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' coup\u00e9' + (summary.off === 1 ? '' : 's'))
+      const total = formatTokens(summary.tokens)
+      if (total !== '') parts.push(total)
+      body.appendChild(headElement(
+        PAGE_TABS[0].heading,
+        'Chaque interrupteur retire l\u2019outil du mod\u00e8le dans toutes les conversations.',
+        parts.join(' \u00b7 '),
+      ))
+
+      const rows = Array.isArray(payload?.tools) ? payload.tools : []
+      if (rows.length === 0) {
+        body.appendChild(noteElement(payload?.error !== undefined
+          ? 'Erreur : ' + String(payload.error)
+          : 'Aucun outil enregistr\u00e9.', payload?.ok === false))
+        return
+      }
+      const groups = Array.isArray(payload?.groups) ? payload.groups : []
+      if (groups.length === 0) {
+        for (const row of rows) body.appendChild(toolRow(row, state))
+        return
+      }
+      for (const group of groups) {
+        const section = document.createElement('div')
+        section.className = 'dsh-mcpc-group'
+        const head = document.createElement('div')
+        head.className = 'dsh-mcpc-grouphead'
+        const name = document.createElement('span')
+        name.className = 'dsh-mcpc-groupname'
+        name.textContent = String(group.name ?? '')
+        const meta = document.createElement('span')
+        meta.className = 'dsh-mcpc-groupmeta'
+        const bits = [String(group.on ?? 0) + '/' + String(group.count ?? 0)]
+        const groupTokens = formatTokens(group.tokens)
+        if (groupTokens !== '') bits.push(groupTokens)
+        if (group.serverDisabled === true) bits.push('serveur d\u00e9sactiv\u00e9')
+        meta.textContent = bits.join(' \u00b7 ')
+        head.appendChild(name)
+        head.appendChild(meta)
+        section.appendChild(head)
+        for (const row of rows) if (row?.group === group.name) section.appendChild(toolRow(row, state))
+        body.appendChild(section)
+      }
+    }
+
+    function paintPrompts(state, payload) {
+      const body = state.body
+      while (body.firstChild !== null) body.removeChild(body.firstChild)
+      if (payload === null || payload === undefined) {
+        body.appendChild(headElement(
+          PAGE_TABS[1].heading,
+          'Chaque interrupteur retire la section du prompt syst\u00e8me dans toutes les conversations.',
+          '',
+        ))
+        body.appendChild(noteElement('Chargement\u2026', false))
+        return
+      }
+      const summary = payload?.summary ?? {}
+      const parts = []
+      if (typeof summary.on === 'number') parts.push(summary.on + (summary.on === 1 ? ' section active' : ' sections actives'))
+      if (typeof summary.off === 'number' && summary.off > 0) parts.push(summary.off + ' coup\u00e9' + (summary.off === 1 ? 'e' : 'es'))
+      const total = formatTokens(summary.tokens)
+      if (total !== '') parts.push(total)
+      body.appendChild(headElement(
+        PAGE_TABS[1].heading,
+        'Chaque interrupteur retire la section du prompt syst\u00e8me dans toutes les conversations.',
+        parts.join(' \u00b7 '),
+      ))
+
+      const rows = Array.isArray(payload?.prompts) ? payload.prompts : []
+      if (rows.length === 0) {
+        const message = payload?.ok === false
+          ? 'Erreur : ' + String(payload.error ?? 'registre indisponible')
+          : 'Le registre du prompt syst\u00e8me n\u2019est pas accessible.'
+        body.appendChild(noteElement(message, payload?.ok === false))
+        return
+      }
+      const section = document.createElement('div')
+      section.className = 'dsh-mcpc-group'
+      const head = document.createElement('div')
+      head.className = 'dsh-mcpc-grouphead'
+      const name = document.createElement('span')
+      name.className = 'dsh-mcpc-groupname'
+      name.textContent = 'Ordre d\u2019assemblage'
+      const meta = document.createElement('span')
+      meta.className = 'dsh-mcpc-groupmeta'
+      meta.textContent = String(rows.length) + ' sections'
+      head.appendChild(name)
+      head.appendChild(meta)
+      section.appendChild(head)
+      for (const row of rows) section.appendChild(promptRow(row, state))
+      body.appendChild(section)
+    }
+
+    function paintPage(state, kind) {
+      try {
+        const payload = state.payload[kind]
+        if (kind === 'tools') paintTools(state, payload)
+        else paintPrompts(state, payload)
+        state.body.setAttribute('data-mcpc-ready', 'true')
+      } catch (error) {
+        report('page-paint-error', String(error?.message ?? error))
+      }
+    }
+
+    function loadPage(state, kind, force) {
+      if (state.loading[kind] === true) return
+      if (force !== true && state.payload[kind] !== null) return
+      state.loading[kind] = true
+      const url = ENDPOINT + '?view=' + kind + '&client=' + CLIENT_VERSION
+      fetchJson(url)
+        .then((payload) => {
+          state.loading[kind] = false
+          if (payload !== null && typeof payload === 'object') state.payload[kind] = payload
+          else state.payload[kind] = { ok: false, error: 'r\u00e9ponse illisible' }
+          if (state.tab === kind) paintPage(state, kind)
+        })
+        .catch((error) => {
+          state.loading[kind] = false
+          state.payload[kind] = { ok: false, error: String(error?.message ?? error) }
+          if (state.tab === kind) paintPage(state, kind)
+          report('page-load-error', kind + ': ' + String(error?.message ?? error))
+        })
+    }
+
+    /** Show or hide the panel's own content while one of our tabs is active. */
+    function maskOwnContent(state, mask) {
+      const kids = state.root.children
+      for (let index = 2; index < kids.length; index += 1) {
+        const kid = kids[index]
+        if (kid === null || kid === undefined) continue
+        if (typeof kid.hasAttribute === 'function' && kid.hasAttribute('data-mcpc-body')) continue
+        try {
+          if (mask === true) {
+            if (kid.style.display !== 'none') {
+              kid.setAttribute('data-mcpc-masked', 'true')
+              kid.style.display = 'none'
+            }
+          } else if (kid.hasAttribute('data-mcpc-masked') === true) {
+            kid.removeAttribute('data-mcpc-masked')
+            kid.style.removeProperty('display')
+          }
+        } catch {
+          // One stubborn node must not leave the page blank.
+        }
+      }
+    }
+
+    function selectTab(state, id) {
+      if (state === null) return
+      state.tab = id
+      for (const [key, button] of state.buttons) {
+        button.setAttribute('data-active', key === id ? 'true' : 'false')
+        button.setAttribute('aria-pressed', key === id ? 'true' : 'false')
+      }
+      state.root.setAttribute('data-mcpc-active', '1')
+      state.body.style.display = 'flex'
+      state.body.setAttribute('data-mcpc-view', id)
+      maskOwnContent(state, true)
+      // The body is a single subtree shared by both views: switching tabs must
+      // repaint it even when that view was already loaded.
+      paintPage(state, id)
+      loadPage(state, id, false)
+    }
+
+    function clearTab(state) {
+      if (state === null) return
+      state.tab = null
+      for (const [, button] of state.buttons) {
+        button.setAttribute('data-active', 'false')
+        button.setAttribute('aria-pressed', 'false')
+      }
+      state.root.removeAttribute('data-mcpc-active')
+      state.body.style.display = 'none'
+      maskOwnContent(state, false)
+    }
+
+    function flipPage(state, kind, param, name, wanted) {
+      const url = ENDPOINT + '?view=' + kind + '&' + param + '=' + encodeURIComponent(name)
+        + '&enabled=' + (wanted === true ? 'true' : 'false') + '&client=' + CLIENT_VERSION
+      fetchJson(url)
+        .then((payload) => {
+          if (payload === null || typeof payload !== 'object') return
+          state.payload[kind] = payload
+          if (state.tab === kind) paintPage(state, kind)
+          if (payload.ok !== true) report('page-toggle-error', String(payload.error ?? 'inconnu'))
+          else report('page-toggle', kind + ' ' + name + '=' + String(wanted === true))
+        })
+        .catch((error) => { report('page-toggle-error', String(error?.message ?? error)) })
+    }
+
+    /**
+     * Drop the tabs and body a previous module instance left in the page.
+     *
+     * A client bundle reload replaces the module but not the DOM it built, so
+     * decoration must be idempotent across instances instead of stacking.
+     */
+    function cleanPrevious(root) {
+      try {
+        const strip = childBy(root, (kid) => kid?.getAttribute?.('role') === 'tablist')
+        if (strip !== null) {
+          for (const kid of Array.from(strip.children)) {
+            if (typeof kid.hasAttribute === 'function' && kid.hasAttribute('data-mcpc-tab')) strip.removeChild(kid)
+          }
+        }
+        for (const kid of Array.from(root.children)) {
+          if (typeof kid.hasAttribute === 'function' && kid.hasAttribute('data-mcpc-body')) root.removeChild(kid)
+        }
+        root.removeAttribute('data-mcpc-active')
+        for (const kid of Array.from(root.children)) {
+          if (kid.hasAttribute?.('data-mcpc-masked') === true) {
+            kid.removeAttribute('data-mcpc-masked')
+            kid.style.removeProperty('display')
+          }
+        }
+      } catch {
+        // A half-cleaned page is still better than a duplicated one.
+      }
+    }
+
+    /** Build our tabs and body inside the panel page; returns the state. */
+    function decoratePage(root) {
+      const strip = childBy(root, (kid) => kid?.getAttribute?.('role') === 'tablist')
+      if (strip === null) return null
+      cleanPrevious(root)
+      const own = []
+      for (let index = 0; index < strip.children.length; index += 1) {
+        if (tagIs(strip.children[index], 'BUTTON')) own.push(strip.children[index])
+      }
+      if (own.length === 0) return null
+
+      const buttons = new Map()
+      const prototype = own[own.length - 1]
+      for (const tab of PAGE_TABS) {
+        let button
+        try {
+          button = prototype.cloneNode(true)
+        } catch {
+          button = null
+        }
+        if (button === null) {
+          button = document.createElement('button')
+          button.className = prototype.getAttribute('className') ?? prototype.className ?? ''
+          button.type = 'button'
+        }
+        button.textContent = tab.label
+        button.setAttribute('data-mcpc-tab', tab.id)
+        button.setAttribute('data-active', 'false')
+        button.setAttribute('aria-pressed', 'false')
+        button.setAttribute('title', tab.heading)
+        strip.appendChild(button)
+        buttons.set(tab.id, button)
+      }
+
+      const body = document.createElement('div')
+      body.className = 'dsh-mcpc-body'
+      body.setAttribute('data-mcpc-body', '1')
+      body.style.display = 'none'
+      root.appendChild(body)
+
+      const state = {
+        root,
+        strip,
+        body,
+        buttons,
+        tab: null,
+        payload: { tools: null, prompts: null },
+        loading: { tools: false, prompts: false },
+        flip: (kind, param, name, wanted) => flipPage(state, kind, param, name, wanted),
+        observer: null,
+        timer: null,
+        dispose: null,
+      }
+
+      for (const tab of PAGE_TABS) {
+        buttons.get(tab.id).addEventListener('click', (event) => {
+          event.preventDefault()
+          selectTab(state, tab.id)
+        })
+      }
+      // The user going back to one of the panel's own tabs must reveal its
+      // content again; the listener runs in the capture phase so it wins
+      // against React's own click handling.
+      const onStripClick = (event) => {
+        let node = event.target
+        while (node !== null && node !== undefined && node !== strip) {
+          if (typeof node.hasAttribute === 'function' && node.hasAttribute('data-mcpc-tab')) return
+          node = node.parentNode
+        }
+        if (state.tab !== null) clearTab(state)
+      }
+      strip.addEventListener('click', onStripClick, true)
+
+      const repair = () => {
+        if (state.tab === null) return
+        if (state.body.style.display !== 'flex') state.body.style.display = 'flex'
+        maskOwnContent(state, true)
+        if (state.body.childNodes.length === 0 && state.payload[state.tab] === null) paintPage(state, state.tab)
+      }
+      try {
+        if (typeof MutationObserver === 'function') {
+          state.observer = new MutationObserver(() => {
+            try { repair() } catch { /* a repair pass must never throw into React */ }
+          })
+          state.observer.observe(root, { childList: true, subtree: false })
+        }
+      } catch {
+        state.observer = null
+      }
+      // Belt and braces: content swapped by React is hidden again within a
+      // quarter second even if the observer missed the mutation.
+      state.timer = setInterval(() => {
+        try {
+          if (document.contains?.(root) === false) { disposePage(state); return }
+          // A reloaded bundle replaces the module but keeps the page: the old
+          // body is detached by the new instance, so this one stands down.
+          if (state.body.isConnected === false) { disposePage(state); return }
+          repair()
+        } catch { /* ignore */ }
+      }, 250)
+
+      state.dispose = () => {
+        state.tab = null
+        try { strip.removeEventListener('click', onStripClick, true) } catch { /* already gone */ }
+        try { state.observer?.disconnect?.() } catch { /* already gone */ }
+        if (state.timer !== null) clearInterval(state.timer)
+        state.timer = null
+        try { body.remove() } catch { if (body.parentNode !== null) body.parentNode.removeChild(body) }
+        for (const [, button] of buttons) {
+          try { button.remove() } catch { /* already gone */ }
+        }
+        try { root.removeAttribute('data-mcpc-active') } catch { /* ignore */ }
+        maskOwnContent(state, false)
+      }
+      return state
+    }
+
+    function disposePage(state) {
+      if (state === null) return
+      try { state.dispose?.() } catch { /* already disposed */ }
+      if (PAGE === state) PAGE = null
+    }
+
+    /**
+     * Keep the page decorated while the panel is open. A new page element
+     * (panel reopened, route changed) replaces the previous decoration.
+     */
+    function installPageTabs() {
+      let root = null
+      try { root = findPageRoot() } catch { root = null }
+      if (PAGE !== null && (root === null || root !== PAGE.root || pageAlive(PAGE) === false)) {
+        disposePage(PAGE)
+      }
+      if (root === null || PAGE !== null) return
+      ensurePageStyles()
+      const state = decoratePage(root)
+      if (state !== null) {
+        PAGE = state
+        report('page-tabs', 'tabs installed')
+      }
+    }
+
+    function pageAlive(state) {
+      try {
+        if (state?.root?.isConnected === true) return true
+        if (typeof document.contains === 'function') return document.contains(state.root) === true
+      } catch {
+        // Unknown: assume alive and let the next pass decide.
+        return true
+      }
+      return true
+    }
+
     return {
       inject: ['remote'],
       apply(ctx) {
         // Nothing here may take the page down: every step is guarded, and a
         // failure simply leaves the chip or the panel decoration absent.
+        report('apply', 'v=' + CLIENT_VERSION)
         try {
           refresh(true)
         } catch {
@@ -895,6 +1566,23 @@ window.__ModuleLoader__.load({
           installChip(ctx)
         } catch (error) {
           report('chip-slot-error', String(error?.message ?? error))
+        }
+        try {
+          installPageTabs()
+        } catch (error) {
+          report('page-tabs-error', String(error?.message ?? error))
+        }
+        // The panel page exists only while its sidebar row is open, so the
+        // decoration is re-checked often: the pass is one query when the page
+        // is closed and idle work when it is open.
+        const pageTimer = setInterval(() => {
+          try { installPageTabs() } catch { /* one failed pass must not stop the decorator */ }
+        }, 300)
+        if (typeof pageTimer?.unref === 'function') pageTimer.unref()
+        try {
+          ctx.effect(() => () => clearInterval(pageTimer), 'dsh-mcp-companion: page tabs')
+        } catch {
+          // No effect scope: the interval stays for the life of the page.
         }
         // The namespace appears when the owning panel mounts it; a light poll
         // picks it up without depending on plugin activation order.

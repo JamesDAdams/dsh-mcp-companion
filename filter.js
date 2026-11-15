@@ -20,10 +20,23 @@
  * the restriction on `agent.ctx`, and a reentrancy guard keeps the synchronous
  * `tools/change` emission from looping.
  *
+ * Version 3 adds the two Skill/MCP page tabs, which are profile-wide:
+ *
+ *   - `tools` holds individual public tool names the user switched off; the
+ *     same `tools.restrict({ deny })` call carries them, so one tool can be
+ *     denied without disabling its whole server;
+ *   - `prompts` holds system-prompt section names the user switched off. A
+ *     section is hidden by registering an empty section of the same name in the
+ *     Agent scope: scoped sections shadow global ones, and an empty section is
+ *     dropped when the prompt is rendered, so the owner's registration is never
+ *     touched.
+ *
  * State lives in `<dshHome>/dsh-customizer/state.json`:
  *   {
- *     "version": 2,
+ *     "version": 3,
  *     "disabled": ["wincu"],
+ *     "tools": ["mcp__wincu__screenshot"],
+ *     "prompts": ["tool:bash"],
  *     "sessions": {
  *       "<sessionId>": { "on": [], "off": ["mcp-resource-servers"], "at": 1735000000000 }
  *     }
@@ -35,7 +48,7 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import os from 'node:os'
 
-export const STATE_VERSION = 2
+export const STATE_VERSION = 3
 
 /** Keep the file bounded: only the most recently touched sessions survive. */
 export const MAX_SESSIONS = 120
@@ -61,11 +74,13 @@ function names(value) {
 
 /** Read the whole persisted state; a missing or broken file means "all on". */
 export function loadState() {
-  const empty = { version: STATE_VERSION, disabled: [], sessions: {} }
+  const empty = { version: STATE_VERSION, disabled: [], tools: [], prompts: [], sessions: {} }
   try {
     const parsed = JSON.parse(readFileSync(statePath(), 'utf8'))
     if (parsed === null || typeof parsed !== 'object') return empty
     const disabled = names(parsed.disabled)
+    const tools = names(parsed.tools)
+    const prompts = names(parsed.prompts)
     const sessions = {}
     const raw = parsed.sessions
     if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -85,7 +100,7 @@ export function loadState() {
         sessions[id] = row
       }
     }
-    return { version: STATE_VERSION, disabled, sessions }
+    return { version: STATE_VERSION, disabled, tools, prompts, sessions }
   } catch {
     // Missing or unreadable state: nothing is disabled.
     return empty
@@ -95,6 +110,8 @@ export function loadState() {
 /** Atomic write of the whole state, with the session map pruned. */
 export async function saveState(state) {
   const disabled = names(state?.disabled)
+  const tools = names(state?.tools)
+  const prompts = names(state?.prompts)
   const kept = Object.entries(state?.sessions ?? {})
     .filter(([, row]) => row !== null && typeof row === 'object' && (names(row.on).length > 0 || names(row.off).length > 0))
     .sort((a, b) => (Number(b[1]?.at) || 0) - (Number(a[1]?.at) || 0))
@@ -109,7 +126,7 @@ export async function saveState(state) {
   }
   const path = statePath()
   await mkdir(dirname(path), { recursive: true })
-  const body = JSON.stringify({ version: STATE_VERSION, disabled, sessions }, null, 2) + '\n'
+  const body = JSON.stringify({ version: STATE_VERSION, disabled, tools, prompts, sessions }, null, 2) + '\n'
   const temp = path + '.tmp-' + process.pid + '-' + Math.random().toString(36).slice(2, 8)
   await writeFile(temp, body, 'utf8')
   try {
@@ -157,9 +174,10 @@ function errorText(error) {
  * per-conversation override always reads the current state.
  */
 export class DisableController {
-  constructor(ctx, namesOf) {
+  constructor(ctx, namesOf, sectionsOf) {
     this.ctx = ctx
     this.namesOf = namesOf
+    this.sectionsOf = sectionsOf
     this.mounted = new Map()
     this.mounting = new Set()
     this.syncing = false
@@ -170,6 +188,15 @@ export class DisableController {
   pluginFor(agentId) {
     const holder = { sync: () => {} }
     const namesFor = () => this.namesOf(agentId)
+    const sectionsFor = () => {
+      if (typeof this.sectionsOf !== 'function') return []
+      try {
+        const list = this.sectionsOf(agentId)
+        return Array.isArray(list) ? list : []
+      } catch {
+        return []
+      }
+    }
     return {
       holder,
       plugin: {
@@ -180,13 +207,23 @@ export class DisableController {
           let applied = null
           let live = true
           let inside = false
+          /** section name -> the effect that hides it in this Agent scope. */
+          const hidden = new Map()
+          let hiddenSignature = null
           const sync = () => {
             if (!live || inside) return
             inside = true
             try {
               run()
+            } catch (error) {
+              warnOf(c, 'deny sync failed: ' + errorText(error))
             } finally {
               inside = false
+            }
+            try {
+              runSections()
+            } catch (error) {
+              warnOf(c, 'prompt section sync failed: ' + errorText(error))
             }
           }
           const run = () => {
@@ -218,6 +255,46 @@ export class DisableController {
               undo = undefined
               applied = null
             }
+          }
+          /**
+           * Hide switched-off prompt sections for this Agent only.
+           *
+           * A scoped section shadows the global one with the same name, and an
+           * empty section is dropped when the prompt renders, so registering an
+           * empty shadow is a reversible "off" that never touches the plugin
+           * that owns the text. Sections already registered in this very scope
+           * (an agent preset persona, for instance) cannot be shadowed: the
+           * duplicate is reported once and left alone.
+           */
+          const runSections = () => {
+            let prompt
+            try {
+              prompt = typeof c.get === 'function' ? c.get('systemPrompt') : undefined
+            } catch {
+              prompt = undefined
+            }
+            if (prompt === undefined || prompt === null) return
+            if (typeof prompt.section !== 'function') return
+            const wanted = [...new Set(sectionsFor().filter((name) => typeof name === 'string' && name.length > 0))].sort()
+            const signature = wanted.join('\u0000')
+            if (signature === hiddenSignature) return
+            for (const [name, disposer] of [...hidden]) {
+              if (wanted.includes(name)) continue
+              hidden.delete(name)
+              try { disposer() } catch (error) { warnOf(c, 'cannot restore prompt section ' + name + ': ' + errorText(error)) }
+            }
+            for (const name of wanted) {
+              if (hidden.has(name)) continue
+              try {
+                hidden.set(name, prompt.section({ name, order: 0, text: '', interpolate: false }))
+              } catch (error) {
+                // Keep it in the map with a no-op so the failure is reported
+                // once per change instead of on every tools/change pass.
+                hidden.set(name, () => {})
+                warnOf(c, 'cannot hide prompt section "' + name + '": ' + errorText(error))
+              }
+            }
+            hiddenSignature = signature
           }
           holder.sync = sync
           try {
@@ -312,8 +389,8 @@ export class DisableController {
 }
 
 /** Subscribe the controller to Agent lifecycle and tool changes. */
-export function attachDisableController(ctx, namesOf) {
-  const controller = new DisableController(ctx, namesOf)
+export function attachDisableController(ctx, namesOf, sectionsOf) {
+  const controller = new DisableController(ctx, namesOf, sectionsOf)
   const offCreated = ctx.on('agent/created', (payload) => controller.applyTo(payload?.agent))
   const offDisposed = ctx.on('agent/disposed', (payload) => {
     const id = payload?.agent?.id

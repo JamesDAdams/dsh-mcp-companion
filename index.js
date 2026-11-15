@@ -11,9 +11,19 @@
  *
  * This route answers with what actually exists at runtime instead:
  *
- *   GET /local-dsh-customizer/mcp-servers
+ *   GET /local-dsh-customizer/mcp-servers            -> MCP inventory
+ *   GET /local-dsh-customizer/mcp-servers?view=tools -> every public tool
+ *   GET /local-dsh-customizer/mcp-servers?view=prompts -> every system-prompt
+ *                                                       section
+ *   GET …&toggleTool=<name>&enabled=true|false       -> switch one tool
+ *   GET …&togglePrompt=<name>&enabled=true|false     -> switch one section
  *
- * It joins two read-only sources:
+ * The two views feed the extra tabs this plugin adds to the Skill/MCP page; the
+ * toggles are profile-wide and flow back through the same per-Agent restriction
+ * (tools) and empty-shadow (prompt sections) mechanism the MCP switches use.
+ *
+ * The inventory joins two read-only sources:
+ *
  *   1. the live loader entries (`ctx.loader.entries()`), i.e. every declared
  *      `@deepseek-ai/dsh-mcp-client` row plus the other plugin entries, with
  *      their id, package name, config, disabled flag and fiber phase;
@@ -24,8 +34,10 @@
  * A server present in (2) but not in (1) is exactly the case the other panel
  * cannot show; it is reported with `source: "plugin"`.
  *
- * Nothing is written, no MCP server is started, and no config value is
- * evaluated: the route only reads strings and numbers it can see.
+ * Reading never starts an MCP server and never evaluates a config value: the
+ * views only report strings and numbers the Host can already see. The only
+ * writes are this plugin's own switches, recorded in
+ * `<dshHome>/dsh-customizer/state.json`.
  */
 
 const ROUTE = '/local-dsh-customizer/mcp-servers'
@@ -47,6 +59,8 @@ const FIBER_PHASE = {
 }
 
 const MAX_TOOLS = 200
+/** Longest prompt-section body the page tab receives; the rest is dropped. */
+const PROMPT_TEXT_LIMIT = 2500
 
 /** Last Client bundle that asked for the inventory (diagnostics only). */
 let LAST_CLIENT = null
@@ -389,6 +403,336 @@ function inventory(ctx, disabled, sessionId, state) {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* The two extra page tabs: tool definitions and system-prompt sections        */
+/* -------------------------------------------------------------------------- */
+
+/** Names the user switched off, read from the persisted state shape. */
+function nameList(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const name of value) {
+    if (typeof name === 'string' && name.length > 0 && !out.includes(name)) out.push(name)
+  }
+  return out
+}
+
+function toolNamesOff(state) {
+  return nameList(state?.tools)
+}
+
+function promptNamesOff(state) {
+  return nameList(state?.prompts)
+}
+
+/** Replace one name's switch state inside a plain name list. */
+function withName(list, name, wanted) {
+  const set = new Set(nameList(list))
+  if (wanted) set.delete(name)
+  else set.add(name)
+  return [...set].sort()
+}
+
+/** The names `tools.restrict()` would accept, or null when unreadable. */
+function restrictableOf(ctx) {
+  try {
+    const tools = serviceOf(ctx, 'tools')
+    if (tools === undefined || typeof tools.view !== 'function') return null
+    const view = tools.view(undefined)
+    const names = view?.restrictableNames
+    if (names !== undefined && names !== null && typeof names.has === 'function' && typeof names[Symbol.iterator] === 'function') {
+      return names instanceof Set ? names : new Set(names)
+    }
+  } catch { /* private API moved: report rows as toggleable and let the denied call decide */ }
+  return null
+}
+
+/** Server names declared in the profile: longest first, for prefix matching. */
+function declaredServerNames(ctx) {
+  const out = []
+  try {
+    for (const entry of readEntries(ctx).rows) {
+      if (entry.name !== MCP_CLIENT_PACKAGE) continue
+      const name = asString(entry.config?.serverName)
+      if (name !== undefined && !out.includes(name)) out.push(name)
+    }
+  } catch { /* no loader */ }
+  out.sort((a, b) => b.length - a.length)
+  return out
+}
+
+/** Heuristic size of one tool definition, matching the harness' token meter. */
+function estimateSchemaTokens(schema) {
+  try {
+    return Math.ceil(JSON.stringify(schema).length / CHARS_PER_TOKEN)
+  } catch {
+    return 0
+  }
+}
+
+/** Every public tool the Host currently registers, one row each. */
+async function toolsPayload(ctx, state, wantApplied) {
+  const { available, rows: schemas } = readSchemas(ctx)
+  const declared = declaredServerNames(ctx)
+  const restrictable = restrictableOf(ctx)
+  const off = new Set(toolNamesOff(state))
+  const serverOff = new Set(nameList(state?.disabled))
+
+  const rows = []
+  const seen = new Set()
+  for (const schema of schemas) {
+    if (schema === null || typeof schema !== 'object' || typeof schema.name !== 'string') continue
+    if (seen.has(schema.name)) continue
+    seen.add(schema.name)
+    const server = RESOURCE_TOOLS.includes(schema.name)
+      ? RESOURCE_BRIDGE_NAME
+      : serverOfTool(schema.name, declared)
+    const serverDisabled = server !== undefined && serverOff.has(server)
+    rows.push({
+      name: schema.name,
+      group: server ?? 'harnais',
+      description: asString(schema.description, 220) ?? '',
+      tokens: estimateSchemaTokens(schema),
+      enabled: !off.has(schema.name) && !serverDisabled,
+      serverDisabled,
+      locked: restrictable !== null && !restrictable.has(schema.name),
+    })
+  }
+  rows.sort((a, b) => (a.group === b.group ? a.name.localeCompare(b.name) : a.group.localeCompare(b.group)))
+
+  const groups = []
+  for (const row of rows) {
+    let group = groups[groups.length - 1]
+    if (group === undefined || group.name !== row.group) {
+      group = { name: row.group, count: 0, on: 0, tokens: 0, serverDisabled: row.serverDisabled === true }
+      groups.push(group)
+    }
+    group.count += 1
+    if (row.enabled) {
+      group.on += 1
+      group.tokens += row.tokens
+    }
+  }
+
+  const result = {
+    ok: true,
+    kind: 'tools',
+    generatedAt: new Date().toISOString(),
+    summary: {
+      tools: rows.length,
+      on: rows.filter((row) => row.enabled).length,
+      off: rows.filter((row) => !row.enabled).length,
+      tokens: rows.reduce((total, row) => total + (row.enabled ? row.tokens : 0), 0),
+      restricted: rows.filter((row) => row.locked).length,
+    },
+    groups,
+    tools: rows,
+    diagnostics: {
+      schemasAvailable: available,
+      restrictable: restrictable === null ? null : restrictable.size,
+      switchedOff: [...off].length,
+    },
+  }
+  if (wantApplied === true) result.applied = appliedTools(ctx, [...off])
+  return result
+}
+
+/**
+ * Proof of effect for the route: the schema set each live Agent would receive
+ * right now. A switched-off tool listed under `visible` was not denied (it is
+ * not restrictable), which the row already reports as `locked`.
+ */
+function appliedTools(ctx, off) {
+  if (off.length === 0) return { agents: 0, hidden: [], visible: [] }
+  const tools = serviceOf(ctx, 'tools')
+  if (tools === undefined || typeof tools.schemas !== 'function') return { agents: 0, error: 'no tools service' }
+  let agents = []
+  try {
+    const list = serviceOf(ctx, 'agents')?.list?.()
+    if (Array.isArray(list)) agents = list
+  } catch { agents = [] }
+  const hidden = new Map()
+  const visible = new Map()
+  const errors = []
+  let count = 0
+  for (const agent of agents) {
+    if (agent === null || typeof agent !== 'object') continue
+    count += 1
+    let names
+    try {
+      names = new Set()
+      for (const schema of tools.schemas(agent) ?? []) {
+        if (schema !== null && typeof schema === 'object' && typeof schema.name === 'string') names.add(schema.name)
+      }
+    } catch (error) {
+      errors.push(String(error?.message ?? error).slice(0, 180))
+      continue
+    }
+    for (const name of off) {
+      const map = names.has(name) ? visible : hidden
+      map.set(name, (map.get(name) ?? 0) + 1)
+    }
+  }
+  return {
+    agents: count,
+    hidden: [...hidden.keys()].sort(),
+    visible: [...visible.keys()].sort(),
+    errors: errors.slice(0, 4),
+  }
+}
+
+/** The prompt registry, read without running an assembly. */
+function promptRegistry(ctx) {
+  const prompt = serviceOf(ctx, 'systemPrompt')
+  const out = { available: prompt !== undefined, map: new Map(), error: null }
+  if (prompt === undefined) return out
+  try {
+    const layers = prompt.layers
+    if (layers !== undefined && layers !== null && typeof layers.merge === 'function') {
+      for (const [name, section] of layers.merge(undefined, (layer) => layer.sections)) {
+        if (typeof name === 'string' && section !== null && typeof section === 'object') out.map.set(name, section)
+      }
+    }
+  } catch (error) {
+    out.error = String(error?.message ?? error).slice(0, 240)
+  }
+  return out
+}
+
+/**
+ * Every system-prompt section, in the order the model receives it.
+ *
+ * `assemble()` is preferred because it resolves text callbacks exactly the way
+ * the loop does; when it is unavailable the registry's raw entries are shown so
+ * the tab still lists every section. Agent-scoped shadows (an agent preset
+ * persona) are not listed: this view is the profile-wide prompt.
+ */
+async function promptsPayload(ctx, state, wantApplied) {
+  const prompt = serviceOf(ctx, 'systemPrompt')
+  const registry = promptRegistry(ctx)
+  let assembled = null
+  let assembleError = null
+  if (prompt !== undefined && typeof prompt.assemble === 'function') {
+    try {
+      assembled = await prompt.assemble({})
+    } catch (error) {
+      assembleError = String(error?.message ?? error).slice(0, 240)
+    }
+  }
+
+  const off = new Set(promptNamesOff(state))
+  const rows = []
+  const seen = new Set()
+  const add = (name, text, order, dynamic) => {
+    if (seen.has(name)) return
+    seen.add(name)
+    const body = typeof text === 'string' ? text : ''
+    rows.push({
+      name,
+      order: Number.isFinite(order) ? order : 0,
+      tokens: Math.ceil(body.length / CHARS_PER_TOKEN),
+      chars: body.length,
+      empty: body.length === 0,
+      dynamic: dynamic === true,
+      enabled: !off.has(name),
+      truncated: body.length > PROMPT_TEXT_LIMIT,
+      text: body.length > PROMPT_TEXT_LIMIT ? body.slice(0, PROMPT_TEXT_LIMIT) : body,
+    })
+  }
+
+  if (assembled !== null && Array.isArray(assembled.sections)) {
+    for (const section of assembled.sections) {
+      if (section === null || typeof section !== 'object' || typeof section.name !== 'string') continue
+      const known = registry.map.get(section.name)
+      add(section.name, section.text, asNumber(known?.order), false)
+    }
+  } else {
+    for (const [name, section] of registry.map) {
+      let text = ''
+      let dynamic = false
+      if (typeof section.text === 'string') text = section.text
+      else if (typeof section.text === 'function') {
+        dynamic = true
+        try {
+          const value = section.text({})
+          if (typeof value === 'string') text = value
+        } catch { /* context-dependent text: listed without a body */ }
+      }
+      add(name, text, asNumber(section.order), dynamic)
+    }
+  }
+  rows.sort((a, b) => (a.order === b.order ? a.name.localeCompare(b.name) : a.order - b.order))
+
+  const result = {
+    ok: true,
+    kind: 'prompts',
+    generatedAt: new Date().toISOString(),
+    summary: {
+      sections: rows.length,
+      on: rows.filter((row) => row.enabled).length,
+      off: rows.filter((row) => !row.enabled).length,
+      tokens: rows.reduce((total, row) => total + (row.enabled ? row.tokens : 0), 0),
+    },
+    prompts: rows,
+    diagnostics: {
+      service: prompt !== undefined,
+      assembled: assembled !== null,
+      assembleError,
+      registryError: registry.error,
+      registry: registry.map.size,
+    },
+  }
+  if (wantApplied === true) result.applied = await appliedSections(ctx, prompt, promptNamesOff(state))
+  return result
+}
+
+/**
+ * Proof of effect, for the route only: assemble each live Agent's prompt and
+ * report which switched-off sections no longer contribute any text. A section
+ * that stays visible is one whose owner registered it in the same scope (an
+ * agent preset), which cannot be shadowed.
+ */
+async function appliedSections(ctx, prompt, off) {
+  if (off.length === 0) return { agents: 0, hidden: [], visible: [] }
+  if (prompt === undefined || typeof prompt.assemble !== 'function') return { agents: 0, error: 'no systemPrompt service' }
+  let agents = []
+  try {
+    const list = serviceOf(ctx, 'agents')?.list?.()
+    if (Array.isArray(list)) agents = list
+  } catch { agents = [] }
+  const hidden = new Map()
+  const visible = new Map()
+  const errors = []
+  let count = 0
+  for (const agent of agents) {
+    if (agent === null || typeof agent !== 'object') continue
+    count += 1
+    try {
+      const assembly = await prompt.assemble({ agent, scope: agent })
+      const contributing = new Set()
+      for (const section of Array.isArray(assembly?.sections) ? assembly.sections : []) {
+        if (section !== null && typeof section === 'object' && typeof section.text === 'string' && section.text.length > 0) {
+          contributing.add(section.name)
+        }
+      }
+      for (const name of off) {
+        const map = contributing.has(name) ? visible : hidden
+        map.set(name, (map.get(name) ?? 0) + 1)
+      }
+    } catch (error) {
+      errors.push(String(error?.message ?? error).slice(0, 180))
+    }
+  }
+  return {
+    agents: count,
+    // Present in no agent's prompt: the shadow is in effect.
+    hidden: [...hidden.keys()].sort(),
+    // Still contributing text somewhere: the owner owns the scope too.
+    visible: [...visible.keys()].sort(),
+    errors: errors.slice(0, 4),
+  }
+}
+
 function sendJson(res, status, payload) {
   try {
     const body = JSON.stringify(payload)
@@ -479,7 +823,14 @@ export function apply(ctx) {
 
   let controller
   try {
-    controller = attachDisableController(ctx, (agentId) => denyNames(ctx, offSetFor(state, agentId)))
+    controller = attachDisableController(
+      ctx,
+      // Denied for one conversation: the MCP servers switched off there, plus
+      // the individual tools switched off for the whole profile.
+      (agentId) => [...denyNames(ctx, offSetFor(state, agentId)), ...toolNamesOff(state)],
+      // Hidden for every conversation: the prompt sections switched off.
+      () => promptNamesOff(state),
+    )
     ctx.on('agent/created', (payload) => pushDiag('agent-created', String(payload?.agent?.id ?? '')))
     if (typeof ctx.effect === 'function') {
       ctx.effect(() => () => {
@@ -517,6 +868,61 @@ export function apply(ctx) {
           }
           const diag = paramOf('diag', 60)
           if (diag !== null) pushDiag(diag, paramOf('text', 300) ?? '')
+          const view = paramOf('view', 20)
+
+          // One tool of the tab list: the switch is profile-wide, so the same
+          // per-Agent deny the MCP switches use carries it.
+          const toggleTool = paramOf('toggleTool', 200)
+          if (toggleTool !== null) {
+            const wanted = url.searchParams.get('enabled') === 'true'
+            const known = (await toolsPayload(ctx, state)).tools.find((row) => row.name === toggleTool)
+            if (known === undefined) {
+              sendJson(res, 400, { ok: false, kind: 'tools', error: 'unknown tool: ' + toggleTool })
+              return
+            }
+            state.tools = withName(state.tools, toggleTool, wanted)
+            try {
+              await saveState(state)
+            } catch (error) {
+              try { ctx.logger?.warn?.('dsh-customizer: cannot persist the tool switches: %s', String(error?.message ?? error)) } catch { /* no logger */ }
+            }
+            controller?.syncAll()
+            sendJson(res, 200, await toolsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
+          // One system-prompt section: hidden by an empty Agent-scoped shadow.
+          const togglePrompt = paramOf('togglePrompt', 200)
+          if (togglePrompt !== null) {
+            const wanted = url.searchParams.get('enabled') === 'true'
+            const before = await promptsPayload(ctx, state)
+            const known = before.prompts.some((row) => row.name === togglePrompt)
+              || promptNamesOff(state).includes(togglePrompt)
+            if (!known) {
+              sendJson(res, 400, { ok: false, kind: 'prompts', error: 'unknown prompt section: ' + togglePrompt })
+              return
+            }
+            state.prompts = withName(state.prompts, togglePrompt, wanted)
+            try {
+              await saveState(state)
+            } catch (error) {
+              try { ctx.logger?.warn?.('dsh-customizer: cannot persist the prompt switches: %s', String(error?.message ?? error)) } catch { /* no logger */ }
+            }
+            controller?.syncAll()
+            sendJson(res, 200, await promptsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
+          if (view === 'tools' || view === 'prompts') {
+            if (method === 'HEAD') {
+              res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+              res.end()
+              return
+            }
+            sendJson(res, 200, view === 'tools' ? await toolsPayload(ctx, state, url.searchParams.get('applied') === '1') : await promptsPayload(ctx, state, url.searchParams.get('applied') === '1'))
+            return
+          }
+
           const sessionId = paramOf('session', 200)
           const toggle = method === 'GET' ? url.searchParams.get('toggle') : null
           if (toggle !== null) {

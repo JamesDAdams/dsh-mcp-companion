@@ -28,6 +28,7 @@ Conséquence : ils n'apparaissent jamais dans la liste, et même ajoutés, leur 
 - `Test connection` et `Tools` fonctionnent sur ces cartes (les outils listés sont les vrais).
 - Le reste reste en lecture seule avec un message clair : l'édition YAML et la suppression sont refusées, car ces serveurs appartiennent à un autre plugin.
 - Ajoute un **bouton `MCP`** dans la rangée de la nouvelle conversation (à droite de `Standard mode`) : son menu liste les serveurs MCP et coupe ceux que vous ne voulez pas **dans cette conversation**. Le réglage est enregistré par conversation.
+- Ajoute **deux onglets** à la page Skill / MCP du panneau : **Outils** (un outil par ligne, avec son poids en tokens et son interrupteur) et **Prompt système** (une section de prompt par ligne, avec son poids et son interrupteur).
 
 Aucun fichier d'un autre plugin n'est modifié, aucune ligne n'est ajoutée au `cordis.patch.yml` du profil, et aucun second serveur MCP n'est lancé.
 
@@ -59,6 +60,26 @@ Sur l'écran **New Session**, la rangée qui contient le sélecteur de workspace
 
 Le bouton vit dans le slot additif `conversation.hero.options` : aucun onglet, aucun élément de l'interface de DSH n'est remplacé.
 
+## Onglets « Outils » et « Prompt système »
+
+La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la suite de ses propres onglets `Skills` et `MCP` — **sans modifier son code** : la décoration se fait dans le DOM rendu, avec ses propres boutons clonés (mêmes classes, même style, même soulignement).
+
+### Outils
+
+- Une ligne par outil **public réellement enregistré dans le Host**, groupée par serveur MCP (`wincu`, `mcp-resource-servers`…) ou par `harnais` pour les outils intégrés.
+- Chaque ligne : le nom exact que le modèle reçoit (`mcp__wincu__windows_computer_use_click`, `read`…), la description, le **poids du schéma en tokens** et un interrupteur.
+- Couper un outil le retire du schéma du modèle **pour tous les agents**, sans désactiver son serveur. L'en-tête additionne les outils actifs et leur poids.
+- Un serveur MCP coupé apparaît en grisé (« serveur désactivé ») : le réglage reste possible mais n'a d'effet qu'une fois le serveur rallumé.
+- Un outil non restreignable (`locked`) est affiché avec son interrupteur désactivé : `ctx.tools.restrict()` n'accepte que les noms visibles avant restriction.
+
+### Prompt système
+
+- Une ligne par section du prompt assemble par `ctx.systemPrompt` : `harness:identity`, `deployment:persona-prefix`, `deployment:persona-suffix`, `mcp:<serveur>`, `app:web-surface`, `harness:source`…
+- Chaque ligne affiche l'ordre d'assemblage, le nombre de caractères, le poids en tokens et un interrupteur. Un clic sur le nom déplie le texte exact de la section.
+- Couper une section la retire du prompt de **toutes** les conversations, sans toucher au plugin qui l'a enregistrée.
+
+Les deux réglages sont **globaux au profil** (comme les interrupteurs du panneau) et persistent dans le même fichier d'état (`tools` et `prompts`).
+
 ## Comment ça marche
 
 **Moitié Host** (`index.js`, `filter.js`)
@@ -67,7 +88,10 @@ Le bouton vit dans le slot additif `conversation.hero.options` : aucun onglet, a
 - `GET /local-dsh-customizer/mcp-servers?toggle=<nom>&enabled=true|false` bascule un serveur, écrit l'état et réapplique les restrictions.
 - `...?session=<id>` renvoie la vue de cette conversation (avec `override` et `globalEnabled` par serveur) ; `...&session=<id>&toggle=...` écrit un override de conversation au lieu du défaut du profil.
 - La désactivation monte un petit plugin sur chaque `agent.ctx` qui appelle `ctx.tools.restrict({ deny })` — même mécanisme que `dsh-skill-mcp-panel`, avec garde de ré-entrance sur `tools/change` pour éviter la boucle connue de cette API. La liste refusée est recalculée par agent : défaut du profil + overrides de **sa** session.
-- État : `<dshHome>/dsh-customizer/state.json` — `disabled` (défaut du profil) et `sessions[<id>] = { on, off, at }` (overrides par conversation, 120 sessions max).
+- `...?view=tools[&applied=1]` liste tous les outils publics avec leur poids ; `...?view=prompts[&applied=1]` liste les sections du prompt. `applied=1` assemble le prompt de chaque agent vivant et renvoie quelles sections ne contribuent plus de texte et quels outils ne sont plus dans leur schéma : c'est la preuve d'effet, utile au diagnostic.
+- `...?toggleTool=<nom>&enabled=true|false` et `...?togglePrompt=<nom>&enabled=true|false` écrivent les deux nouveaux interrupteurs.
+- Une section de prompt se coupe en enregistrant, dans le scope de **chaque agent**, une section **de même nom mais vide** : une section de scope masque la section globale homonyme, et une section vide disparaît au rendu (`renderPrompt` filtre les textes vides). Le texte n'est donc jamais envoyé au modèle et le plugin propriétaire n'est pas modifié ; réactiver la section dispose simplement cette ombre.
+- État : `<dshHome>/dsh-customizer/state.json` — `disabled` (défaut du profil), `tools` (outils coupés), `prompts` (sections coupées) et `sessions[<id>] = { on, off, at }` (overrides par conversation, 120 sessions max).
 
 **Moitié Client** (`client.js`)
 
@@ -82,6 +106,7 @@ Le bouton vit dans le slot additif `conversation.hero.options` : aucun onglet, a
 - Testé avec DeepSeek Harness Desktop `0.2.2-rc.1` et `dsh-skill-mcp-panel` `2.3.12`.
 - Le nom du namespace du panneau (`skillMcpPanel`, `mcpManager`) et la forme des appels (`setEnabled(serverName, enabled, entryId)` ou `setEnabled({ serverName, enabled, entryId })`) sont pris en charge.
 - Le bouton `MCP` utilise le slot `conversation.hero.options` (« options compactes de la rangée New Session, après les contrôles de workspace et de preset »). Si ce slot disparaît d'une version future, seul le bouton disparaît : le panneau continue de fonctionner.
+- Les deux onglets s'appuient sur le contrat DOM public de la page du panneau (`div[data-tab="skills"|"mcp"]` → `[role="tablist"]` + corps) et se réparent seuls si React remplace le contenu. Si le panneau change cette structure, nos onglets disparaissent — la page reste intacte.
 - Si le panneau change encore son API, la découverte par forme limite la casse : ouvrez une issue avec la version du panneau.
 
 ## Limites
@@ -89,6 +114,9 @@ Le bouton vit dans le slot additif `conversation.hero.options` : aucun onglet, a
 - Désactiver **ne stoppe pas** le processus du serveur : `wincu` doit rester lancé pour le computer use, seuls ses outils sont masqués.
 - Le bouton `MCP` apparaît dans la rangée de la **nouvelle** conversation (`New Session`) ; c'est là qu'on choisit les serveurs de la conversation à venir. Le réglage reste attaché à la session une fois celle-ci créée.
 - Les serveurs déclarés dans `cordis.patch.yml` restent gérés par le panneau lui-même.
+- Les deux onglets sont **globaux au profil** : ils ne se règlent pas conversation par conversation (seul le menu `MCP` de la conversation le fait).
+- Une section enregistrée par un preset directement dans le scope de l'agent (par exemple une persona de preset) ne peut pas être masquée par une ombre du même nom : la ligne reste active, l'échec est journalisé et `applied` la liste comme `visible`.
+- `AGENTS.md`, le catalogue de skills et les consignes de workspace ne sont **pas** des sections du prompt (ce sont des messages utilisateur) : ils n'apparaissent donc pas dans l'onglet « Prompt système ».
 - Cette version vise les serveurs stdio montés par un plugin ; les serveurs HTTP distants ne sont pas concernés.
 
 ## Désinstallation
