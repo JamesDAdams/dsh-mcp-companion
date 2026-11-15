@@ -1,0 +1,53 @@
+{
+  "name": "dsh-mcp-companion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Completes the DeepSeek Harness Skill/MCP panel with the servers another plugin mounts itself (wincu, the MCP resource bridge) and gives those cards a real, persistent on/off switch.",
+  "license": "MIT",
+  "author": "JamesDAdams",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JamesDAdams/dsh-mcp-companion.git"
+  },
+  "homepage": "https://github.com/JamesDAdams/dsh-mcp-companion#readme",
+  "bugs": {
+    "url": "https://github.com/JamesDAdams/dsh-mcp-companion/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "computer-use"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "filter.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-gateway"
+      ]
+    }
+  }
+}

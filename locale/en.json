@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP companion",
+    "description": "Completes the Skill / MCP panel's list with the servers another plugin mounts itself (wincu, the MCP resource bridge) and turns their switches into real, persistent toggles, without modifying that panel."
+  }
+}

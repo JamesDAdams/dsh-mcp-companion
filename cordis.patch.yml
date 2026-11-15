@@ -1,0 +1,8 @@
+# dsh-mcp-companion — bundle patch.
+#
+# One Host row owns the read-only inventory route and the per-Agent tool deny
+# that implements the switches; one Client row decorates the Skill/MCP panel's
+# list at runtime. Nothing here touches another plugin's files.
+- insert:
+    - id: mcp-companion
+      name: 'dsh-mcp-companion'

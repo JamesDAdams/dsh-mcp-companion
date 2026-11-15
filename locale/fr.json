@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Compagnon MCP",
+    "description": "Complète la liste MCP du panneau Skill / MCP avec les serveurs qu’un autre plugin monte lui-même (wincu, le pont de ressources MCP) et rend leurs interrupteurs réellement fonctionnels, sans modifier ce panneau."
+  }
+}
