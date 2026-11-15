@@ -1,3 +1,35 @@
+/** Group used for rows no plugin claims. */
+const UNATTRIBUTED = 'harness'
+
+/** Order rows by group (plugin name, unclaimed last), then by row name/order. */
+function compareGroups(a, b) {
+  const rank = (group) => (group === UNATTRIBUTED ? 1 : 0)
+  if (rank(a.group) !== rank(b.group)) return rank(a.group) - rank(b.group)
+  if (a.group !== b.group) return a.group.localeCompare(b.group)
+  const keyA = typeof a.sortKey === 'number' ? a.sortKey : 0
+  const keyB = typeof b.sortKey === 'number' ? b.sortKey : 0
+  if (keyA !== keyB) return keyA - keyB
+  return String(a.name).localeCompare(String(b.name))
+}
+
+/** Group counters, built from rows already sorted by group. */
+function groupsOf(rows) {
+  const groups = []
+  for (const row of rows) {
+    let group = groups[groups.length - 1]
+    if (group === undefined || group.name !== row.group) {
+      group = { name: row.group, count: 0, on: 0, tokens: 0 }
+      groups.push(group)
+    }
+    group.count += 1
+    if (row.enabled !== false) {
+      group.on += 1
+      group.tokens += row.tokens
+    }
+  }
+  return groups
+}
+
 /**
  * Host half of @local/dsh-customizer.
  *
@@ -645,7 +677,7 @@ async function toolsPayload(ctx, state, wantApplied) {
     rows.push({
       ...definitionText(schema),
       name: schema.name,
-      group: 'harness',
+      group: guessOwner('tool', schema.name, table) ?? UNATTRIBUTED,
       description: asString(schema.description, 220) ?? '',
       tokens: estimateSchemaTokens(schema),
       enabled: !off.has(schema.name),
@@ -654,21 +686,10 @@ async function toolsPayload(ctx, state, wantApplied) {
       locked: restrictable !== null && !restrictable.has(schema.name),
     })
   }
-  rows.sort((a, b) => (a.group === b.group ? a.name.localeCompare(b.name) : a.group.localeCompare(b.group)))
+  // Plugin groups first, alphabetical; the tools no plugin claims go last.
+  rows.sort(compareGroups)
 
-  const groups = []
-  for (const row of rows) {
-    let group = groups[groups.length - 1]
-    if (group === undefined || group.name !== row.group) {
-      group = { name: row.group, count: 0, on: 0, tokens: 0, serverDisabled: row.serverDisabled === true }
-      groups.push(group)
-    }
-    group.count += 1
-    if (row.enabled) {
-      group.on += 1
-      group.tokens += row.tokens
-    }
-  }
+  const groups = groupsOf(rows)
 
   const result = {
     ok: true,
@@ -843,6 +864,8 @@ async function promptsPayload(ctx, state, wantApplied) {
       enabled: !off.has(name),
       description: describeSection(name, body),
       owner,
+      group: owner ?? UNATTRIBUTED,
+      sortKey: Number.isFinite(order) ? order : 0,
       truncated: body.length > PROMPT_TEXT_LIMIT,
       text: body.length > PROMPT_TEXT_LIMIT ? body.slice(0, PROMPT_TEXT_LIMIT) : body,
     })
@@ -869,7 +892,7 @@ async function promptsPayload(ctx, state, wantApplied) {
       add(name, text, asNumber(section.order), dynamic)
     }
   }
-  rows.sort((a, b) => (a.order === b.order ? a.name.localeCompare(b.name) : a.order - b.order))
+  rows.sort(compareGroups)
 
   const result = {
     ok: true,
@@ -881,6 +904,7 @@ async function promptsPayload(ctx, state, wantApplied) {
       off: rows.filter((row) => !row.enabled).length,
       tokens: rows.reduce((total, row) => total + (row.enabled ? row.tokens : 0), 0),
     },
+    groups: groupsOf(rows),
     prompts: rows,
     diagnostics: {
       service: prompt !== undefined,

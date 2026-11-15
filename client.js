@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.11'
+    const CLIENT_VERSION = '1.2.12'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -1213,6 +1213,32 @@ window.__ModuleLoader__.load({
       return head
     }
 
+    /** One bordered group: a headline with its counters, then its rows. */
+    function groupElement(name, bits, nodes) {
+      const section = document.createElement('div')
+      section.className = 'dsh-mcpc-group'
+      const head = document.createElement('div')
+      head.className = 'dsh-mcpc-grouphead'
+      const label = document.createElement('span')
+      label.className = 'dsh-mcpc-groupname'
+      label.textContent = String(name ?? '')
+      const meta = document.createElement('span')
+      meta.className = 'dsh-mcpc-groupmeta'
+      meta.textContent = bits.filter((bit) => typeof bit === 'string' && bit.length > 0).join(' \u00b7 ')
+      head.appendChild(label)
+      head.appendChild(meta)
+      section.appendChild(head)
+      for (const node of nodes) section.appendChild(node)
+      return section
+    }
+
+    /** Group counters as shown in a group headline. */
+    function groupBits(group) {
+      const count = typeof group.count === 'number' ? group.count : 0
+      const on = typeof group.on === 'number' ? group.on : count
+      return [String(on) + '/' + String(count), formatTokens(group.tokens)]
+    }
+
     function paintTools(state, payload) {
       const body = state.body
       while (body.firstChild !== null) body.removeChild(body.firstChild)
@@ -1233,7 +1259,7 @@ window.__ModuleLoader__.load({
       if (total !== '') parts.push(total)
       body.appendChild(headElement(
         PAGE_TABS[0].heading,
-        'Each switch removes the tool from the model in every conversation.',
+        'Each switch removes the tool from the model in every conversation. Groups are the plugins that register them.',
         parts.join(' \u00b7 '),
       ))
 
@@ -1250,25 +1276,10 @@ window.__ModuleLoader__.load({
         return
       }
       for (const group of groups) {
-        const section = document.createElement('div')
-        section.className = 'dsh-mcpc-group'
-        const head = document.createElement('div')
-        head.className = 'dsh-mcpc-grouphead'
-        const name = document.createElement('span')
-        name.className = 'dsh-mcpc-groupname'
-        name.textContent = String(group.name ?? '')
-        const meta = document.createElement('span')
-        meta.className = 'dsh-mcpc-groupmeta'
-        const bits = [String(group.on ?? 0) + '/' + String(group.count ?? 0)]
-        const groupTokens = formatTokens(group.tokens)
-        if (groupTokens !== '') bits.push(groupTokens)
-        if (group.serverDisabled === true) bits.push('server off')
-        meta.textContent = bits.join(' \u00b7 ')
-        head.appendChild(name)
-        head.appendChild(meta)
-        section.appendChild(head)
-        for (const row of rows) if (row?.group === group.name) section.appendChild(toolRow(row, state))
-        body.appendChild(section)
+        const nodes = []
+        for (const row of rows) if (row?.group === group.name) nodes.push(toolRow(row, state))
+        if (nodes.length === 0) continue
+        body.appendChild(groupElement(group.name, groupBits(group), nodes))
       }
     }
 
@@ -1292,7 +1303,7 @@ window.__ModuleLoader__.load({
       if (total !== '') parts.push(total)
       body.appendChild(headElement(
         PAGE_TABS[1].heading,
-        'Each switch removes the section from the system prompt in every conversation.',
+        'Each switch removes the section from the system prompt in every conversation. Groups are the plugins that register them.',
         parts.join(' \u00b7 '),
       ))
 
@@ -1304,21 +1315,19 @@ window.__ModuleLoader__.load({
         body.appendChild(noteElement(message, payload?.ok === false))
         return
       }
-      const section = document.createElement('div')
-      section.className = 'dsh-mcpc-group'
-      const head = document.createElement('div')
-      head.className = 'dsh-mcpc-grouphead'
-      const name = document.createElement('span')
-      name.className = 'dsh-mcpc-groupname'
-      name.textContent = 'Assembly order'
-      const meta = document.createElement('span')
-      meta.className = 'dsh-mcpc-groupmeta'
-      meta.textContent = String(rows.length) + ' sections'
-      head.appendChild(name)
-      head.appendChild(meta)
-      section.appendChild(head)
-      for (const row of rows) section.appendChild(promptRow(row, state))
-      body.appendChild(section)
+      const groups = Array.isArray(payload?.groups) ? payload.groups : []
+      if (groups.length === 0) {
+        const nodes = []
+        for (const row of rows) nodes.push(promptRow(row, state))
+        body.appendChild(groupElement('Assembly order', [String(rows.length) + ' sections'], nodes))
+        return
+      }
+      for (const group of groups) {
+        const nodes = []
+        for (const row of rows) if (row?.group === group.name) nodes.push(promptRow(row, state))
+        if (nodes.length === 0) continue
+        body.appendChild(groupElement(group.name, groupBits(group), nodes))
+      }
     }
 
     function paintPage(state, kind) {
