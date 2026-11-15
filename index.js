@@ -61,6 +61,8 @@ const FIBER_PHASE = {
 const MAX_TOOLS = 200
 /** Longest prompt-section body the page tab receives; the rest is dropped. */
 const PROMPT_TEXT_LIMIT = 2500
+/** Longest tool definition the page tab receives; the rest is dropped. */
+const TOOL_TEXT_LIMIT = 4000
 
 /** Last Client bundle that asked for the inventory (diagnostics only). */
 let LAST_CLIENT = null
@@ -470,6 +472,29 @@ function estimateSchemaTokens(schema) {
   }
 }
 
+/**
+ * The exact definition the model receives, pretty-printed for the expanded row.
+ *
+ * Only the three model-visible fields are kept: that is what the schema really
+ * costs and what the model actually reads.
+ */
+function definitionText(schema) {
+  try {
+    const visible = {
+      name: schema.name,
+      description: typeof schema.description === 'string' ? schema.description : '',
+      parameters: schema.parameters,
+    }
+    const text = JSON.stringify(visible, null, 2)
+    return {
+      definition: text.length > TOOL_TEXT_LIMIT ? text.slice(0, TOOL_TEXT_LIMIT) : text,
+      definitionTruncated: text.length > TOOL_TEXT_LIMIT,
+    }
+  } catch {
+    return { definition: '', definitionTruncated: false }
+  }
+}
+
 /** Every public tool the Host currently registers, one row each. */
 async function toolsPayload(ctx, state, wantApplied) {
   const { available, rows: schemas } = readSchemas(ctx)
@@ -490,6 +515,7 @@ async function toolsPayload(ctx, state, wantApplied) {
     // a per-server switch: this tab only covers the harness' own tools.
     if (server !== undefined) continue
     rows.push({
+      ...definitionText(schema),
       name: schema.name,
       group: 'harness',
       description: asString(schema.description, 220) ?? '',

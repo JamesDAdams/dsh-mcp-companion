@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     try { React = require('react') } catch { React = undefined }
 
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.2.7'
+    const CLIENT_VERSION = '1.2.9'
     const CHIP_SLOT = 'conversation.hero.options'
     const CHIP_ID = 'mcp-companion.conversation'
 
@@ -957,7 +957,7 @@ window.__ModuleLoader__.load({
       '.dsh-mcpc-pre{margin:0;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l2);',
       'background:var(--dsw-alias-markdown-code-block,var(--dsw-alias-bg-layer-1));',
       'color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;',
-      'font-size:11.5px;line-height:17px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}',
+      'font-size:11.5px;line-height:17px;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto}',
       '.dsh-mcpc-note{font-size:12.5px;line-height:20px;color:var(--dsw-alias-label-tertiary);padding:6px 2px}',
       '.dsh-mcpc-note[data-error="true"]{color:var(--dsw-alias-state-error-primary)}',
       '.dsh-mcpc-tag{font-size:10.5px;line-height:15px;padding:1px 6px;border-radius:5px;',
@@ -1053,12 +1053,15 @@ window.__ModuleLoader__.load({
     }
 
     /** One tool row: name, description, weight, switch. */
+    /** One tool row: name, description, weight, switch, expandable definition. */
     function toolRow(row, state) {
+      const wrap = document.createElement('div')
       const element = document.createElement('div')
       element.className = 'dsh-mcpc-row'
       element.setAttribute('data-off', row.enabled === true ? 'false' : 'true')
 
-      const text = document.createElement('div')
+      const text = document.createElement('button')
+      text.type = 'button'
       text.className = 'dsh-mcpc-rowtext'
       const name = document.createElement('div')
       name.className = 'dsh-mcpc-rowname'
@@ -1072,6 +1075,24 @@ window.__ModuleLoader__.load({
       sub.textContent = bits.join(' \u00b7 ')
       text.appendChild(name)
       if (sub.textContent !== '') text.appendChild(sub)
+
+      const definition = typeof row.definition === 'string' ? row.definition : ''
+      const pre = document.createElement('pre')
+      pre.className = 'dsh-mcpc-pre'
+      pre.textContent = definition
+      pre.style.display = 'none'
+      const canExpand = definition.length > 0
+      if (canExpand) {
+        text.title = 'Open the full definition sent to the model'
+        text.setAttribute('aria-expanded', 'false')
+        text.addEventListener('click', () => {
+          const open = pre.style.display !== 'none'
+          pre.style.display = open ? 'none' : 'block'
+          text.setAttribute('aria-expanded', open ? 'false' : 'true')
+        })
+      } else {
+        text.setAttribute('data-static', 'true')
+      }
 
       const tokens = formatTokens(row.tokens)
       const tok = document.createElement('span')
@@ -1088,7 +1109,9 @@ window.__ModuleLoader__.load({
         (wanted) => { if (locked) return; state.flip('tools', 'toggleTool', row.name, wanted) },
       ))
       if (locked) element.lastChild.disabled = true
-      return element
+      wrap.appendChild(element)
+      if (canExpand) wrap.appendChild(pre)
+      return wrap
     }
 
     /** One prompt-section row: name, order, weight, switch, expandable text. */

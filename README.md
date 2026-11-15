@@ -67,7 +67,7 @@ La page **Skill / MCP** du panneau reçoit deux onglets de plus, insérés à la
 ### Tools
 
 - Une ligne par outil **du harnais** réellement enregistré dans le Host (`read`, `bash`, `web_search`…). Les outils des serveurs MCP ne sont **pas** dupliqués ici : ils restent affichés par la section `MCP` du panneau, avec l'interrupteur par serveur.
-- Chaque ligne : le nom exact que le modèle reçoit, la description, le **poids du schéma en tokens** et un interrupteur.
+- Chaque ligne : le nom exact que le modèle reçoit, la description, le **poids du schéma en tokens** et un interrupteur. Un clic sur le nom déplie la **définition complète envoyée au modèle** (nom, description, paramètres), telle que le Host la sert.
 - Couper un outil le retire du schéma du modèle **pour tous les agents**, sans toucher au reste. L'en-tête additionne les outils actifs et leur poids.
 - Un outil non restreignable (`locked`) est affiché avec son interrupteur désactivé : `ctx.tools.restrict()` n'accepte que les noms visibles avant restriction.
 - La liste défile dans son propre cadre : la barre d'onglets reste fixe en haut.
