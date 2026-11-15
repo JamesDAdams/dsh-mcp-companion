@@ -5,8 +5,14 @@
  * have no `cordis.patch.yml` row, so the Skill/MCP panel cannot enable or
  * disable them the way it does for declared rows. This module gives those two
  * cards a real, reversible switch: while a card is off, its tools are denied in
- * every Agent scope, so they disappear from the model schema and cannot be
- * called.
+ * the Agent scope, so they disappear from the model schema and cannot be called.
+ *
+ * The same mechanism carries the per-conversation switch added in 1.1:
+ *
+ *   - `disabled` is the profile-wide default (what the panel writes);
+ *   - `sessions[<sessionId>]` holds that conversation's overrides: `off` names
+ *     denied only there, `on` names explicitly re-enabled there even though the
+ *     profile default denies them.
  *
  * The mechanism is the one the panel itself uses (and documents in
  * dsh-skill-mcp-panel/lib/tool-filter.js): `ctx.tools.restrict({ deny })` is
@@ -15,7 +21,13 @@
  * `tools/change` emission from looping.
  *
  * State lives in `<dshHome>/dsh-customizer/state.json`:
- *   { "version": 1, "disabled": ["wincu", "mcp-resource-servers"] }
+ *   {
+ *     "version": 2,
+ *     "disabled": ["wincu"],
+ *     "sessions": {
+ *       "<sessionId>": { "on": [], "off": ["mcp-resource-servers"], "at": 1735000000000 }
+ *     }
+ *   }
  */
 
 import { readFileSync } from 'node:fs'
@@ -23,7 +35,10 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import os from 'node:os'
 
-export const STATE_VERSION = 1
+export const STATE_VERSION = 2
+
+/** Keep the file bounded: only the most recently touched sessions survive. */
+export const MAX_SESSIONS = 120
 
 export function dshHome() {
   const fromEnv = process.env.DSH_HOME
@@ -35,24 +50,66 @@ export function statePath() {
   return join(dshHome(), 'dsh-customizer', 'state.json')
 }
 
-/** Read the disabled server names; a missing or broken file means "all on". */
-export function loadDisabled() {
-  try {
-    const parsed = JSON.parse(readFileSync(statePath(), 'utf8'))
-    if (parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.disabled)) {
-      return parsed.disabled.filter((name) => typeof name === 'string' && name.length > 0)
-    }
-  } catch {
-    // Missing or unreadable state: nothing is disabled.
+function names(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const name of value) {
+    if (typeof name === 'string' && name.length > 0 && !out.includes(name)) out.push(name)
   }
-  return []
+  return out
 }
 
-/** Atomic write of the disabled server names. */
-export async function saveDisabled(names) {
+/** Read the whole persisted state; a missing or broken file means "all on". */
+export function loadState() {
+  const empty = { version: STATE_VERSION, disabled: [], sessions: {} }
+  try {
+    const parsed = JSON.parse(readFileSync(statePath(), 'utf8'))
+    if (parsed === null || typeof parsed !== 'object') return empty
+    const disabled = names(parsed.disabled)
+    const sessions = {}
+    const raw = parsed.sessions
+    if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (const id of Object.keys(raw)) {
+        if (typeof id !== 'string' || id.length === 0) continue
+        const value = raw[id]
+        const row = { on: [], off: [], at: 0 }
+        if (Array.isArray(value)) {
+          // Version 1 of the session shape stored a bare deny list.
+          row.off = names(value)
+        } else if (value !== null && typeof value === 'object') {
+          row.on = names(value.on)
+          row.off = names(value.off)
+          if (typeof value.at === 'number' && Number.isFinite(value.at)) row.at = value.at
+        }
+        if (row.on.length === 0 && row.off.length === 0) continue
+        sessions[id] = row
+      }
+    }
+    return { version: STATE_VERSION, disabled, sessions }
+  } catch {
+    // Missing or unreadable state: nothing is disabled.
+    return empty
+  }
+}
+
+/** Atomic write of the whole state, with the session map pruned. */
+export async function saveState(state) {
+  const disabled = names(state?.disabled)
+  const kept = Object.entries(state?.sessions ?? {})
+    .filter(([, row]) => row !== null && typeof row === 'object' && (names(row.on).length > 0 || names(row.off).length > 0))
+    .sort((a, b) => (Number(b[1]?.at) || 0) - (Number(a[1]?.at) || 0))
+    .slice(0, MAX_SESSIONS)
+  const sessions = {}
+  for (const [id, row] of kept) {
+    sessions[id] = {
+      on: names(row.on),
+      off: names(row.off),
+      at: Number(row.at) || Date.now(),
+    }
+  }
   const path = statePath()
   await mkdir(dirname(path), { recursive: true })
-  const body = JSON.stringify({ version: STATE_VERSION, disabled: names }, null, 2) + '\n'
+  const body = JSON.stringify({ version: STATE_VERSION, disabled, sessions }, null, 2) + '\n'
   const temp = path + '.tmp-' + process.pid + '-' + Math.random().toString(36).slice(2, 8)
   await writeFile(temp, body, 'utf8')
   try {
@@ -61,6 +118,18 @@ export async function saveDisabled(names) {
     if (!['EPERM', 'EEXIST', 'EACCES'].includes(error?.code ?? '')) throw error
     await writeFile(path, body, 'utf8')
   }
+}
+
+/** Profile-wide deny list (what the Skill/MCP panel switches write). */
+export function loadDisabled() {
+  return loadState().disabled
+}
+
+/** Rewrite the profile-wide list, keeping the per-conversation overrides. */
+export async function saveDisabled(list) {
+  const state = loadState()
+  state.disabled = names(list)
+  await saveState(state)
 }
 
 function warnOf(ctx, message) {
@@ -83,8 +152,9 @@ function errorText(error) {
 /**
  * Applies a dynamic deny list to every Agent scope.
  *
- * `namesOf()` is evaluated on each (re)application so tools that connect after
- * the switch was flipped are caught by the next `tools/change`.
+ * `namesOf(agentId)` is evaluated on each (re)application so tools that connect
+ * after the switch was flipped are caught by the next `tools/change`, and so a
+ * per-conversation override always reads the current state.
  */
 export class DisableController {
   constructor(ctx, namesOf) {
@@ -97,9 +167,9 @@ export class DisableController {
   }
 
   /** One tiny plugin per Agent: it owns the restriction on that scope. */
-  pluginFor() {
+  pluginFor(agentId) {
     const holder = { sync: () => {} }
-    const namesOf = () => this.namesOf()
+    const namesFor = () => this.namesOf(agentId)
     return {
       holder,
       plugin: {
@@ -127,7 +197,7 @@ export class DisableController {
               warnOf(c, 'cannot read restrictable tools: ' + errorText(error))
               return
             }
-            const deny = holder.namesOf()
+            const deny = namesFor()
             const usable = deny.filter((name) => known.has(name))
             const signature = usable.slice().sort().join('\u0000')
             if (signature === applied) return
@@ -149,7 +219,6 @@ export class DisableController {
               applied = null
             }
           }
-          holder.namesOf = namesOf
           holder.sync = sync
           try {
             c.effect(() => () => {
@@ -177,6 +246,14 @@ export class DisableController {
     }
   }
 
+  /** Re-evaluate one Agent only: a per-conversation switch must not disturb the others. */
+  syncOne(agentId) {
+    if (this.disposed) return
+    const entry = this.mounted.get(agentId)
+    if (entry === undefined) return
+    try { entry.holder.sync() } catch (error) { warnOf(this.ctx, 'reapply failed: ' + errorText(error)) }
+  }
+
   applyTo(agent) {
     if (this.disposed) return
     const id = typeof agent?.id === 'string' ? agent.id : undefined
@@ -185,7 +262,7 @@ export class DisableController {
     if (scopeCtx === undefined || typeof scopeCtx.plugin !== 'function') return
     this.mounting.add(id)
     try {
-      const { plugin, holder } = this.pluginFor()
+      const { plugin, holder } = this.pluginFor(id)
       const fiber = scopeCtx.plugin(plugin)
       this.mounted.set(id, { fiber, holder })
     } catch (error) {
@@ -204,7 +281,7 @@ export class DisableController {
     this.mounted.delete(id)
   }
 
-  /** Re-evaluate after the disabled set changed: remount with the new names. */
+  /** Re-evaluate after the profile-wide set changed: remount with the new names. */
   setChanged() {
     if (this.disposed) return
     this.unmountAll()

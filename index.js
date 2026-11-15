@@ -29,7 +29,7 @@
  */
 
 const ROUTE = '/local-dsh-customizer/mcp-servers'
-import { attachDisableController, loadDisabled, saveDisabled } from './filter.js'
+import { attachDisableController, loadState, saveState } from './filter.js'
 const MCP_CLIENT_PACKAGE = '@deepseek-ai/dsh-mcp-client'
 /** The MCP resource bridge's shared tools, exposed by @deepseek-ai/dsh-mcp-resources. */
 const RESOURCE_BRIDGE_PACKAGE = '@deepseek-ai/dsh-mcp-resources'
@@ -50,6 +50,16 @@ const MAX_TOOLS = 200
 
 /** Last Client bundle that asked for the inventory (diagnostics only). */
 let LAST_CLIENT = null
+/** Recent Client reports (slot registration, errors); newest first. */
+const CLIENT_DIAG = []
+const MAX_DIAG = 24
+
+function pushDiag(kind, text) {
+  try {
+    CLIENT_DIAG.unshift({ kind: String(kind).slice(0, 40), text: String(text ?? '').slice(0, 300), at: new Date().toISOString() })
+    while (CLIENT_DIAG.length > MAX_DIAG) CLIENT_DIAG.pop()
+  } catch { /* never fail a request over diagnostics */ }
+}
 
 function asString(value, max = 400) {
   if (typeof value !== 'string') return undefined
@@ -174,7 +184,7 @@ function buildDeclaredServer(entry) {
   }
 }
 
-function inventory(ctx, disabled) {
+function inventory(ctx, disabled, sessionId, state) {
   const off = disabled instanceof Set ? disabled : new Set(Array.isArray(disabled) ? disabled : [])
   const { available: loaderAvailable, rows: entries } = readEntries(ctx)
   const { available: toolsAvailable, rows: schemas } = readSchemas(ctx)
@@ -278,10 +288,10 @@ function inventory(ctx, disabled) {
   const rows = [...servers.values()].map((row) => {
     row.active = row.toolCount > 0
     if (row.source === 'plugin' && provider !== undefined) row.provider = provider
-    if (row.source === 'plugin' || row.source === 'bridge') {
-      row.toggleable = true
-      row.enabled = !off.has(row.name)
-      row.disabled = !row.enabled
+    if (row.source === 'plugin' || row.source === 'bridge') row.toggleable = true
+    if (off.has(row.name)) {
+      row.enabled = false
+      row.disabled = true
     }
     return row
   })
@@ -292,6 +302,25 @@ function inventory(ctx, disabled) {
     return a.name.localeCompare(b.name)
   })
 
+  // Per-conversation view: which rows this session overrides, and what the
+  // profile default would be without those overrides.
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    const sessions = state !== null && typeof state === 'object' && state.sessions !== null && typeof state.sessions === 'object'
+      ? state.sessions
+      : {}
+    const over = sessions[sessionId]
+    const on = new Set(Array.isArray(over?.on) ? over.on : [])
+    const offNames = new Set(Array.isArray(over?.off) ? over.off : [])
+    const globalOff = new Set(Array.isArray(state?.disabled) ? state.disabled : [])
+    for (const row of rows) {
+      row.session = sessionId
+      row.globalEnabled = row.source === 'plugin' || row.source === 'bridge'
+        ? !globalOff.has(row.name)
+        : row.enabled === true || offNames.has(row.name)
+      row.override = on.has(row.name) ? 'on' : offNames.has(row.name) ? 'off' : null
+    }
+  }
+
   const summary = {
     servers: rows.length,
     active: rows.filter((row) => row.active && row.enabled !== false).length,
@@ -300,10 +329,17 @@ function inventory(ctx, disabled) {
     bridge: rows.filter((row) => row.source === 'bridge').length,
     declared: rows.filter((row) => row.source === 'profile').length,
     disabled: rows.filter((row) => row.enabled === false).length,
+    overrides: typeof sessionId === 'string' && sessionId.length > 0
+      ? rows.filter((row) => row.override !== null).length
+      : 0,
+    sessions: state !== null && typeof state === 'object' && state.sessions !== null && typeof state.sessions === 'object'
+      ? Object.keys(state.sessions).length
+      : 0,
   }
 
   return {
     ok: true,
+    session: typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null,
     generatedAt: new Date().toISOString(),
     summary,
     servers: rows,
@@ -314,6 +350,7 @@ function inventory(ctx, disabled) {
       loaderEntries: entries.length,
       client: LAST_CLIENT,
       toolSchemas: schemaCount,
+      clientDiag: CLIENT_DIAG.slice(0, 12),
       mcpEntries: entries
         .filter((entry) => entry.id !== null && entry.id !== undefined && /mcp/i.test(entry.id))
         .map((entry) => ({
@@ -368,12 +405,56 @@ function denyNames(ctx, off) {
   return [...names]
 }
 
+/** Deny set for one conversation: profile default plus its own overrides. */
+function offSetFor(state, sessionId) {
+  const off = new Set(Array.isArray(state?.disabled) ? state.disabled : [])
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    const over = state?.sessions?.[sessionId]
+    if (over !== undefined && over !== null) {
+      for (const name of Array.isArray(over.off) ? over.off : []) off.add(name)
+      for (const name of Array.isArray(over.on) ? over.on : []) off.delete(name)
+    }
+  }
+  return off
+}
+
+/**
+ * Write one switch: a conversation override when `sessionId` is given, the
+ * profile default otherwise. An override equal to the default is dropped, so
+ * the file only ever records real differences.
+ */
+function writeToggle(state, name, wanted, sessionId) {
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    const sessions = state.sessions !== null && typeof state.sessions === 'object' ? state.sessions : {}
+    const current = sessions[sessionId]
+    const row = {
+      on: Array.isArray(current?.on) ? current.on.filter((value) => value !== name) : [],
+      off: Array.isArray(current?.off) ? current.off.filter((value) => value !== name) : [],
+      at: 0,
+    }
+    const globalOn = !state.disabled.includes(name)
+    if (wanted !== globalOn) {
+      if (wanted) row.on.push(name)
+      else row.off.push(name)
+    }
+    row.at = Date.now()
+    if (row.on.length === 0 && row.off.length === 0) delete sessions[sessionId]
+    else sessions[sessionId] = row
+    state.sessions = sessions
+    return
+  }
+  const next = state.disabled.filter((value) => value !== name)
+  if (!wanted) next.push(name)
+  state.disabled = next
+}
+
 export function apply(ctx) {
-  const disabled = new Set(loadDisabled())
+  const state = loadState()
 
   let controller
   try {
-    controller = attachDisableController(ctx, () => denyNames(ctx, disabled))
+    controller = attachDisableController(ctx, (agentId) => denyNames(ctx, offSetFor(state, agentId)))
+    ctx.on('agent/created', (payload) => pushDiag('agent-created', String(payload?.agent?.id ?? '')))
     if (typeof ctx.effect === 'function') {
       ctx.effect(() => () => {
         try { controller?.dispose() } catch { /* already disposed */ }
@@ -404,25 +485,32 @@ export function apply(ctx) {
           if (typeof clientVersion === 'string' && clientVersion.length > 0) {
             LAST_CLIENT = { version: clientVersion.slice(0, 40), at: new Date().toISOString() }
           }
+          const paramOf = (name, max) => {
+            const raw = url.searchParams.get(name)
+            return typeof raw === 'string' && raw.length > 0 ? raw.slice(0, max) : null
+          }
+          const diag = paramOf('diag', 60)
+          if (diag !== null) pushDiag(diag, paramOf('text', 300) ?? '')
+          const sessionId = paramOf('session', 200)
           const toggle = method === 'GET' ? url.searchParams.get('toggle') : null
           if (toggle !== null) {
             const wanted = url.searchParams.get('enabled') === 'true'
-            const before = inventory(ctx, disabled)
-            const target = before.servers.find((row) => row.name === toggle && row.toggleable === true)
+            const before = inventory(ctx, offSetFor(state, sessionId), sessionId, state)
+            const target = before.servers.find((row) => row.name === toggle && (row.toggleable === true || row.active === true))
             if (target === undefined) {
               sendJson(res, 400, { ok: false, error: 'unknown toggle target: ' + toggle })
               return
             }
-            if (wanted) disabled.delete(toggle)
-            else disabled.add(toggle)
+            writeToggle(state, toggle, wanted, sessionId)
             try {
-              await saveDisabled([...disabled])
+              await saveState(state)
             } catch (error) {
               try { ctx.logger?.warn?.('dsh-customizer: cannot persist the disabled list: %s', String(error?.message ?? error)) } catch { /* no logger */ }
             }
-            controller?.setChanged()
+            if (sessionId !== null) controller?.syncOne(sessionId)
+            else controller?.setChanged()
           }
-          const payload = inventory(ctx, disabled)
+          const payload = inventory(ctx, offSetFor(state, sessionId), sessionId, state)
           if (method === 'HEAD') {
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
             res.end()

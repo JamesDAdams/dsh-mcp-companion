@@ -1,28 +1,28 @@
 /**
- * Client half of @local/dsh-customizer.
+ * Client half of dsh-mcp-companion.
  *
- * It adds nothing to the UI. A server another plugin mounts itself - the
- * `wincu` Windows computer-use server is created with
- * `ctx.plugin(bridge, bridgeConfig(...))` inside dsh-computer-use-win, so it
- * has no `@deepseek-ai/dsh-mcp-client` row in cordis.patch.yml - cannot appear
- * in the Skill/MCP panel's list, which is built from that file. Rather than
- * adding a second tab or editing the panel, this module decorates the panel's
- * Remote results at runtime:
+ * Two jobs, both additive and both inside another plugin's existing UI:
  *
- *   - `list` and `reload` gain one read-only entry per live server the Host
- *     inventory route reports with source "plugin", so the panel's own cards
- *     render them (its Refresh button calls `reload`);
- *   - `test` answers from the live tool registry instead of a missing row;
- *   - `readRaw` explains why no YAML row exists;
- *   - save / setEnabled / removeServer / writeRaw are refused with a readable
- *     reason, because those servers belong to another plugin.
+ * 1. Skill/MCP panel decoration. A server another plugin mounts itself - the
+ *    `wincu` Windows computer-use server is created with
+ *    `ctx.plugin(bridge, bridgeConfig(...))` inside dsh-computer-use-win, so it
+ *    has no `@deepseek-ai/dsh-mcp-client` row in cordis.patch.yml - cannot
+ *    appear in the panel's list, which is built from that file. This module
+ *    decorates the panel's Remote results at runtime:
  *
- * The hook is the Remote service class's `invoke`, patched once on the
- * prototype: every generated namespace method funnels its envelope through it,
- * whatever the panel calls its namespace and every time it re-mounts.
- * Augmentation only happens for results shaped like the panel's MCP list, and
- * guards only for a server name the Host reports as plugin-owned, so other
- * namespaces are untouched.
+ *      - `list` and `reload` gain one read-only entry per live server the Host
+ *        inventory route reports with source "plugin", so the panel's own cards
+ *        render them (its Refresh button calls `reload`);
+ *      - `test` answers from the live tool registry instead of a missing row;
+ *      - `readRaw` explains why no YAML row exists;
+ *      - save / setEnabled / removeServer / writeRaw are refused with a readable
+ *        reason, because those servers belong to another plugin.
+ *
+ * 2. Conversation MCP chip. A pill in the New Session row (the additive
+ *    `conversation.hero.options` slot, right of the workspace and mode preset
+ *    controls) that opens a menu listing the MCP servers with a switch per
+ *    server. Each switch writes an override for the current conversation, so
+ *    the Host denies those tools for that Agent only - never for the others.
  *
  * This file stays pure ASCII on purpose: the Client bundle builder decodes
  * plugin sources as Latin-1, so non-ASCII literals must be escaped.
@@ -30,9 +30,16 @@
 
 window.__ModuleLoader__.load({
   id: 'dsh-mcp-companion',
-  factory() {
+  factory(require) {
+    // The browser module table owns the React runtime; a build without it must
+    // still keep the panel decoration working.
+    let React
+    try { React = require('react') } catch { React = undefined }
+
     const ENDPOINT = '/local-dsh-customizer/mcp-servers'
-    const CLIENT_VERSION = '1.0.0'
+    const CLIENT_VERSION = '1.1.0'
+    const CHIP_SLOT = 'conversation.hero.options'
+    const CHIP_ID = 'mcp-companion.conversation'
 
     /** Methods the panel uses to change a row: refused for foreign servers. */
     const GUARDED = new Set(['save', 'removeServer', 'writeRaw'])
@@ -47,6 +54,27 @@ window.__ModuleLoader__.load({
     const inventory = { value: null, at: 0, pending: null }
     const foreign = new Map()
     const bridges = new Set()
+
+    /** Fire-and-forget status report, visible in the route diagnostics. */
+    function report(kind, text) {
+      try {
+        const url = ENDPOINT + '?diag=' + encodeURIComponent(String(kind))
+          + '&text=' + encodeURIComponent(String(text ?? '').slice(0, 280))
+          + '&client=' + CLIENT_VERSION
+        fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } }).catch(() => {})
+      } catch {
+        // Reporting must never break the UI.
+      }
+    }
+
+    function fetchJson(url) {
+      return fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+        .then((response) => response.json())
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* 1. Skill/MCP panel decoration                                       */
+    /* ------------------------------------------------------------------ */
 
     function refresh(force) {
       const now = Date.now()
@@ -185,7 +213,8 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function testOf(name) {      return refresh(false).then((payload) => {
+    function testOf(name) {
+      return refresh(false).then((payload) => {
         const server = payload !== null && Array.isArray(payload.servers)
           ? payload.servers.find((row) => row !== null && row.name === name)
           : undefined
@@ -210,8 +239,7 @@ window.__ModuleLoader__.load({
     /** Flip one plugin-owned server; the Host persists it and denies its tools. */
     function toggleOf(name, wanted) {
       const url = ENDPOINT + '?toggle=' + encodeURIComponent(name) + '&enabled=' + (wanted ? 'true' : 'false')
-      return fetch(url, { credentials: 'same-origin', headers: { accept: 'application/json' } })
-        .then((response) => response.json())
+      return fetchJson(url)
         .then((payload) => {
           const fresh = remember(payload)
           const server = fresh !== null && Array.isArray(fresh.servers)
@@ -361,10 +389,336 @@ window.__ModuleLoader__.load({
       return done
     }
 
+    /* ------------------------------------------------------------------ */
+    /* 2. Conversation MCP chip                                            */
+    /* ------------------------------------------------------------------ */
+
+    const CHIP_CSS = [
+      '.dsh-mcp-chip-host{display:inline-flex;align-items:center;min-width:0}',
+      '.dsh-mcp-chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;',
+      'border-radius:9px;border:1px solid var(--dsw-alias-border-l1);',
+      'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);',
+      'font:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;white-space:nowrap;',
+      'transition:background .12s ease,border-color .12s ease}',
+      '.dsh-mcp-chip:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}',
+      '.dsh-mcp-chip[aria-expanded="true"]{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}',
+      '.dsh-mcp-chip .dsh-mcp-chev{transition:transform .15s ease}',
+      '.dsh-mcp-chip[aria-expanded="true"] .dsh-mcp-chev{transform:rotate(180deg)}',
+      '.dsh-mcp-menu{position:fixed;z-index:2147483000;box-sizing:border-box;width:320px;max-height:60vh;',
+      'display:flex;flex-direction:column;padding:6px;border-radius:12px;',
+      'border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-overlay);',
+      'box-shadow:0 12px 32px rgba(0,0,0,.32);color:var(--dsw-alias-label-primary);font-size:13px}',
+      '.dsh-mcp-head{padding:6px 8px 8px;font-size:11px;font-weight:600;letter-spacing:.04em;',
+      'text-transform:uppercase;color:var(--dsw-alias-label-secondary)}',
+      '.dsh-mcp-list{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:2px}',
+      '.dsh-mcp-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;',
+      'cursor:pointer;user-select:none;outline:none}',
+      '.dsh-mcp-row:hover,.dsh-mcp-row:focus-visible{background:var(--dsw-alias-bg-layer-2)}',
+      '.dsh-mcp-row[data-locked="true"]{cursor:default;opacity:.55}',
+      '.dsh-mcp-row[data-locked="true"]:hover{background:transparent}',
+      '.dsh-mcp-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}',
+      '.dsh-mcp-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcp-sub{font-size:11px;color:var(--dsw-alias-label-secondary);overflow:hidden;',
+      'text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-mcp-switch{position:relative;width:30px;height:17px;border-radius:99px;flex:none;box-sizing:border-box;',
+      'background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);',
+      'transition:background .15s ease,border-color .15s ease}',
+      '.dsh-mcp-switch::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;',
+      'border-radius:50%;background:var(--dsw-alias-label-secondary);transition:transform .15s ease,background .15s ease}',
+      '.dsh-mcp-switch[data-on="true"]{background:var(--dsw-alias-brand-primary);border-color:transparent}',
+      '.dsh-mcp-switch[data-on="true"]::after{transform:translateX(13px);background:#fff}',
+      '.dsh-mcp-note{padding:10px 8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.45}',
+      '.dsh-mcp-foot{padding:8px 8px 2px;font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary);',
+      'border-top:1px solid var(--dsw-alias-border-l1);margin-top:4px}',
+    ].join('')
+
+    const PLUG_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0V8zM12 18v4"/></svg>'
+    const CHEVRON = '<svg class="dsh-mcp-chev" width="12" height="12" viewBox="0 0 24 24" fill="none"'
+      + ' stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"'
+      + ' aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>'
+
+    function ensureStyles() {
+      try {
+        if (document.getElementById('dsh-mcp-companion-styles') !== null) return
+        const style = document.createElement('style')
+        style.id = 'dsh-mcp-companion-styles'
+        style.textContent = CHIP_CSS
+        document.head.appendChild(style)
+      } catch {
+        // A page without a head still gets the chip, just unstyled.
+      }
+    }
+
+    const labelOf = (server) => String(server?.name ?? '')
+
+    function subtitleOf(server) {
+      const parts = []
+      const count = typeof server?.toolCount === 'number' ? server.toolCount : 0
+      parts.push(count + (count === 1 ? ' outil' : ' outils'))
+      if (server?.source === 'bridge') parts.push('ressources MCP')
+      else if (server?.source === 'profile') parts.push('d\u00e9clar\u00e9')
+      else if (typeof server?.provider === 'string' && server.provider.length > 0) parts.push(server.provider)
+      if (server?.override === 'on') parts.push('activ\u00e9 ici')
+      else if (server?.override === 'off') parts.push('d\u00e9sactiv\u00e9 ici')
+      else if (server?.globalEnabled === false) parts.push('d\u00e9sactiv\u00e9 partout')
+      return parts.join(' \u00b7 ')
+    }
+
+    /**
+     * Build the chip button inside `node` and return its disposer. The button
+     * lives in the slot's flow; the menu is appended to <body> so no ancestor
+     * can clip it, and is positioned from the button's rect.
+     */
+    function mountChip(node, sessionId) {
+      if (node === null || node === undefined || typeof node.appendChild !== 'function') return undefined
+      ensureStyles()
+
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'dsh-mcp-chip'
+      button.title = 'MCP de cette conversation'
+      button.setAttribute('aria-haspopup', 'dialog')
+      button.setAttribute('aria-expanded', 'false')
+      button.innerHTML = PLUG_ICON + '<span>MCP</span>' + CHEVRON
+      node.appendChild(button)
+
+      let menu = null
+      let timer = null
+      let payload = null
+
+      const hasSession = typeof sessionId === 'string' && sessionId.length > 0
+
+      function urlFor(extra) {
+        const params = []
+        if (hasSession) params.push('session=' + encodeURIComponent(sessionId))
+        params.push('client=' + CLIENT_VERSION)
+        if (typeof extra === 'string' && extra.length > 0) params.push(extra)
+        return ENDPOINT + '?' + params.join('&')
+      }
+
+      function place() {
+        if (menu === null) return
+        const rect = button.getBoundingClientRect()
+        const width = 320
+        const height = menu.offsetHeight || 260
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+        let top = rect.bottom + 8
+        if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 8)
+        menu.style.left = left + 'px'
+        menu.style.top = top + 'px'
+      }
+
+      function note(text) {
+        const element = document.createElement('div')
+        element.className = 'dsh-mcp-note'
+        element.textContent = text
+        return element
+      }
+
+      function rowElement(server) {
+        const row = document.createElement('div')
+        row.className = 'dsh-mcp-row'
+        row.setAttribute('role', 'menuitemcheckbox')
+        const on = server?.enabled !== false
+        const locked = server?.active !== true && server?.toggleable !== true
+        row.setAttribute('aria-checked', String(on))
+        if (locked) row.dataset.locked = 'true'
+
+        const text = document.createElement('div')
+        text.className = 'dsh-mcp-text'
+        const name = document.createElement('div')
+        name.className = 'dsh-mcp-name'
+        name.textContent = labelOf(server)
+        const sub = document.createElement('div')
+        sub.className = 'dsh-mcp-sub'
+        sub.textContent = subtitleOf(server)
+        text.appendChild(name)
+        text.appendChild(sub)
+
+        const toggle = document.createElement('div')
+        toggle.className = 'dsh-mcp-switch'
+        toggle.dataset.on = String(on)
+
+        row.appendChild(text)
+        row.appendChild(toggle)
+
+        if (!locked) {
+          row.tabIndex = 0
+          row.addEventListener('click', () => { flip(labelOf(server), !on) })
+          row.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              flip(labelOf(server), !on)
+            }
+          })
+        }
+        return row
+      }
+
+      function render() {
+        if (menu === null) return
+        const head = document.createElement('div')
+        head.className = 'dsh-mcp-head'
+        head.textContent = 'MCP de cette conversation'
+
+        const list = document.createElement('div')
+        list.className = 'dsh-mcp-list'
+        const servers = Array.isArray(payload?.servers) ? payload.servers : []
+        const rows = servers.filter((server) => server !== null && typeof server === 'object'
+          && (server.toggleable === true || server.active === true))
+        if (payload === null) list.appendChild(note('Chargement\u2026'))
+        else if (rows.length === 0) list.appendChild(note('Aucun serveur MCP actif.'))
+        else for (const server of rows) list.appendChild(rowElement(server))
+
+        const foot = document.createElement('div')
+        foot.className = 'dsh-mcp-foot'
+        foot.textContent = hasSession
+          ? 'Ce r\u00e9glage ne vaut que pour cette conversation.'
+          : 'Ouvre une conversation pour r\u00e9gler ses MCP.'
+
+        while (menu.firstChild !== null) menu.removeChild(menu.firstChild)
+        menu.appendChild(head)
+        menu.appendChild(list)
+        menu.appendChild(foot)
+        place()
+      }
+
+      function load() {
+        return fetchJson(urlFor())
+          .then((next) => {
+            if (next !== null && typeof next === 'object' && next.ok === true) payload = next
+            render()
+          })
+          .catch((error) => {
+            payload = { ok: false, servers: [] }
+            render()
+            report('chip-load-error', String(error?.message ?? error))
+          })
+      }
+
+      function flip(name, wanted) {
+        if (!hasSession) return
+        const extra = 'toggle=' + encodeURIComponent(name) + '&enabled=' + (wanted ? 'true' : 'false')
+        fetchJson(urlFor(extra))
+          .then((next) => {
+            if (next !== null && typeof next === 'object' && next.ok === true) {
+              payload = next
+              render()
+              report('chip-toggle', name + '=' + String(wanted))
+            } else {
+              report('chip-toggle-error', String(next?.error ?? 'inconnu'))
+            }
+          })
+          .catch((error) => { report('chip-toggle-error', String(error?.message ?? error)) })
+      }
+
+      function onOutside(event) {
+        if (menu === null) return
+        if (menu.contains(event.target) || button.contains(event.target)) return
+        close()
+      }
+
+      function onKey(event) {
+        if (event.key === 'Escape') close()
+      }
+
+      function close() {
+        if (timer !== null) {
+          clearInterval(timer)
+          timer = null
+        }
+        document.removeEventListener('mousedown', onOutside, true)
+        document.removeEventListener('keydown', onKey, true)
+        window.removeEventListener('resize', place)
+        if (menu !== null) {
+          menu.remove()
+          menu = null
+        }
+        button.setAttribute('aria-expanded', 'false')
+      }
+
+      function open() {
+        if (menu !== null) return
+        menu = document.createElement('div')
+        menu.className = 'dsh-mcp-menu'
+        menu.setAttribute('role', 'dialog')
+        menu.setAttribute('aria-label', 'MCP de cette conversation')
+        document.body.appendChild(menu)
+        button.setAttribute('aria-expanded', 'true')
+        render()
+        load()
+        timer = setInterval(load, 4000)
+        document.addEventListener('mousedown', onOutside, true)
+        document.addEventListener('keydown', onKey, true)
+        window.addEventListener('resize', place)
+      }
+
+      button.addEventListener('click', () => { if (menu === null) open(); else close() })
+
+      return function disposeChip() {
+        close()
+        try { button.remove() } catch { if (button.parentNode !== null) button.parentNode.removeChild(button) }
+      }
+    }
+
+    /** The slot component: a React shell whose children are the plain-DOM chip. */
+    function ConversationMcpChip(props) {
+      const sessionId = props !== null && typeof props === 'object' && typeof props.sessionId === 'string'
+        ? props.sessionId
+        : undefined
+      const holder = React.useRef(null)
+      React.useEffect(() => {
+        const node = holder.current
+        if (node === null || node === undefined) return undefined
+        const dispose = mountChip(node, sessionId)
+        report('chip-mount', sessionId ?? 'no-session')
+        return () => { if (typeof dispose === 'function') dispose() }
+      }, [sessionId])
+      return React.createElement('span', { className: 'dsh-mcp-chip-host', ref: holder })
+    }
+
+    /** Register the chip in the New Session row, right of the mode preset. */
+    function installChip(ctx) {
+      if (React === undefined || React === null || typeof React.createElement !== 'function') {
+        report('chip-slot-error', 'react runtime unavailable')
+        return false
+      }
+      let slots
+      try {
+        slots = typeof ctx.get === 'function' ? ctx.get('slots') : undefined
+        if (slots === undefined || slots === null) slots = ctx.slots
+      } catch {
+        slots = undefined
+      }
+      if (slots === undefined || slots === null || typeof slots.register !== 'function' || typeof slots.inject !== 'function') {
+        report('chip-slot-error', 'slots service unavailable')
+        return false
+      }
+      try {
+        // A negative order keeps the chip first in the row's option group, so
+        // it sits as close as possible to the workspace and preset controls.
+        const register = () => slots.register({
+          name: CHIP_SLOT,
+          id: CHIP_ID,
+          order: -10,
+          label: 'MCP de cette conversation',
+        }, ConversationMcpChip)
+        slots.inject(CHIP_SLOT, register)
+        report('chip-slot', CHIP_SLOT)
+        return true
+      } catch (error) {
+        report('chip-slot-error', String(error?.message ?? error))
+        return false
+      }
+    }
+
     return {
       inject: ['remote'],
       apply(ctx) {
         refresh(true)
+        installChip(ctx)
         // The namespace appears when the owning panel mounts it; a light poll
         // picks it up without depending on plugin activation order.
         const timer = setInterval(() => {
@@ -372,7 +726,7 @@ window.__ModuleLoader__.load({
           refresh(false)
         }, 1000)
         if (typeof timer?.unref === 'function') timer.unref()
-        ctx.effect(() => () => clearInterval(timer), 'dsh-customizer: mcp list decorator')
+        ctx.effect(() => () => clearInterval(timer), 'dsh-mcp-companion: panel decorator')
       },
     }
   },
